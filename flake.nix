@@ -12,7 +12,9 @@
     # Used by firmware build/flash apps; consumed via overlay in devShell.
     nixpkgs-esp-dev = {
       url = "github:mirrexagon/nixpkgs-esp-dev";
-      inputs.nixpkgs.follows = "nixpkgs";
+      # Do NOT follow our nixpkgs: esp-dev pins a compatible nixpkgs and
+      # builds esp-idf-full under its own config (incl. insecure-package
+      # allowances for esptool's ecdsa dependency).
     };
 
     # Android SDK + JDK tooling pinned for reproducible Gradle builds.
@@ -31,11 +33,15 @@
       # Overlay that exposes ESP-IDF and Android SDK tooling under sleepwalker-* names.
       sleepwalkerOverlay = final: prev: {
         # ESP-IDF toolchain from nixpkgs-esp-dev (Xtensa + idf.py + esptool).
-        sleepwalker-esp-idf = nixpkgs-esp-dev.packages.${final.system}.esp-idf-full or
-          nixpkgs-esp-dev.packages.${final.system}.esp-idf;
+        # Consumed as a pre-built package from esp-dev's own pinned nixpkgs
+        # so its insecure-package allowances apply locally.
+        sleepwalker-esp-idf = nixpkgs-esp-dev.packages.${final.system}.esp-idf-full;
 
         # Android SDK package set pinned via android-nixpkgs.
         sleepwalker-android-sdk = android-nixpkgs.sdk.${final.system};
+
+        # Shared protocol Python package (frames, opcodes, fixtures, tests).
+        sleepwalker-protocol = final.callPackage ./nix/protocol-pkg.nix { };
 
         # Project helper: protocol no-hardware verification command.
         sleepwalker-protocol-check = final.callPackage ./nix/protocol-check.nix { };
@@ -49,13 +55,19 @@
           pkgs = import nixpkgs {
             inherit system;
             overlays = [ sleepwalkerOverlay ];
+            # ESP-IDF's esptool pulls in python3.12-ecdsa (CVE-2024-23342).
+            # Allow it explicitly; esptool is a flashing tool, not a runtime
+            # crypto boundary. Track upstream esptool removal of ecdsa.
+            config.permittedInsecurePackages = [
+              "python3.12-ecdsa-0.19.1"
+            ];
           };
 
           # JDK for Android Gradle builds.
           jdk = pkgs.jdk17;
 
           # Android SDK with the components needed by sleepwalker-app.
-          androidSdk = pkgs.sleepwalker-android-sdk.sdk (sdkPkgs: with sdkPkgs; [
+          androidSdk = pkgs.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
             build-tools-34-0-0
             cmdline-tools-11-0
             platform-tools
@@ -78,7 +90,7 @@
           pythonEnv = pkgs.python3.withPackages (ps: with ps; [
             pytest
             crcmod
-            tomllib-backport or ps.tomli
+            ps.tomli
           ]);
         in
         {
@@ -86,7 +98,7 @@
           packages = {
             sleepwalker-protocol-check = pkgs.sleepwalker-protocol-check;
             sleepwalker-bench-validate = pkgs.sleepwalker-bench-validate;
-            sleepwalker-protocol = pkgs.python3Packages.callPackage ./nix/protocol-pkg.nix { };
+            sleepwalker-protocol = pkgs.sleepwalker-protocol;
             default = pkgs.sleepwalker-protocol-check;
           };
 

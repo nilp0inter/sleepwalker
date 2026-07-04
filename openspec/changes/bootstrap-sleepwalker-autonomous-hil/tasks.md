@@ -1,18 +1,18 @@
 ## 1. Repository and Nix Foundation
 
 - [x] 1.1 Create the monorepo directories for `firmware/`, `android/`, `protocol/`, `sleepwalker-hil/`, `hardware/`, and `nix/`
-- [ ] 1.2 Add a root flake with pinned inputs for nixpkgs, ESP-IDF tooling, Android SDK/JDK tooling, and project helper packages
-- [ ] 1.3 Define collision-resistant flake app/package names using the `sleepwalker-*` prefix
-- [ ] 1.4 Add a default development shell containing ESP-IDF build tools, Android build tools, ADB, serial tooling, SSH tooling, and project helper binaries
-- [ ] 1.5 Add `sleepwalker-hil/bench.example.toml` with fields for Android ADB serial, ESP UART/flash port, HID observer SSH target, HID match criteria, and artifact directory
+- [x] 1.2 Add a root flake with pinned inputs for nixpkgs, ESP-IDF tooling, Android SDK/JDK tooling, and project helper packages
+- [x] 1.3 Define collision-resistant flake app/package names using the `sleepwalker-*` prefix
+- [x] 1.4 Add a default development shell containing ESP-IDF build tools, Android build tools, ADB, serial tooling, SSH tooling, and project helper binaries
+- [x] 1.5 Add `sleepwalker-hil/bench.example.toml` with fields for Android ADB serial, ESP UART/flash port, HID observer SSH target, HID match criteria, and artifact directory
 
 ## 2. Shared Protocol Contract
 
-- [ ] 2.1 Define the versioned command frame layout, sequence identifier, opcode field, payload length, payload, and CRC-32 field under `protocol/`
-- [ ] 2.2 Define symbolic HID usages and the canonical `USB_KEY_SPACE` mapping to USB usage `0x2c` and Linux evdev `KEY_SPACE`
-- [ ] 2.3 Define ACK/status values for received, queued, sent-to-USB, malformed frame, bad CRC, disarmed, queue full, USB not mounted, and unsupported opcode
-- [ ] 2.4 Add protocol golden-frame fixtures for valid `USB_KEY_SPACE`, bad CRC, unsupported opcode, arm, disarm, kill, and release-all cases
-- [ ] 2.5 Add protocol tests or fixture checks that can be run without hardware
+- [x] 2.1 Define the versioned command frame layout, sequence identifier, opcode field, payload length, payload, and CRC-32 field under `protocol/`
+- [x] 2.2 Define symbolic HID usages and the canonical `USB_KEY_SPACE` mapping to USB usage `0x2c` and Linux evdev `KEY_SPACE`
+- [x] 2.3 Define ACK/status values for received, queued, sent-to-USB, malformed frame, bad CRC, disarmed, queue full, USB not mounted, and unsupported opcode
+- [x] 2.4 Add protocol golden-frame fixtures for valid `USB_KEY_SPACE`, bad CRC, unsupported opcode, arm, disarm, kill, and release-all cases
+- [x] 2.5 Add protocol tests or fixture checks that can be run without hardware
 
 ## 3. ESP32-S3 Firmware Skeleton
 
@@ -60,7 +60,7 @@
 
 ## 7. Verification and Commissioning Evidence
 
-- [ ] 7.1 Verify protocol fixture checks pass without hardware
+- [x] 7.1 Verify protocol fixture checks pass without hardware
 - [ ] 7.2 Verify firmware builds through the flake
 - [ ] 7.3 Verify Android APK builds through the flake
 - [ ] 7.4 Verify the HID observer ISO builds through the flake

@@ -5,23 +5,33 @@
 # tests, the no-hardware verification command, and (later) the Android and
 # firmware layers via generated constants.
 { lib
-, python3Packages
+, python3
 }:
-python3Packages.buildPythonPackage {
+let
+  inherit (python3.pkgs) buildPythonPackage pytestCheckHook setuptools wheel;
+in
+buildPythonPackage {
   pname = "sleepwalker-protocol";
   version = "0.1.0";
-  pyproject = false;
 
   src = ../protocol;
 
-  format = "setuptools";
+  # The package ships a pyproject.toml (PEP 621 metadata) and uses the
+  # setuptools build backend.
+  format = "pyproject";
 
-  nativeBuildInputs = with python3Packages; [ ];
+  # Build backend dependencies (setuptools + wheel) for the wheel build.
+  nativeBuildInputs = [ setuptools wheel ];
 
-  propagatedBuildInputs = with python3Packages; [ ];
+  # No external runtime deps in the foundation pass; stdlib only
+  # (zlib for crc32, json, struct, pathlib).
+  propagatedBuildInputs = [ ];
 
-  # No external deps in the foundation pass; stdlib only (zlib for crc32).
-  dontCheck = false;
+  # Tests run via pytest during the check phase using the in-tree suite.
+  nativeCheckInputs = [ pytestCheckHook ];
+
+  # Restrict test discovery to the package test directory.
+  pytestFlags = [ "src/sleepwalker_protocol/tests" ];
 
   pythonImportsCheck = [ "sleepwalker_protocol" ];
 

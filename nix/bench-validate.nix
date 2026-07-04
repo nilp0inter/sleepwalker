@@ -3,10 +3,7 @@
 # Parses and validates a bench TOML configuration file without touching
 # hardware. Reports structured missing-field errors before any HIL operation
 # begins. This is the no-hardware side of the agent-operated HIL contract.
-{ lib, python3, python3Packages, stdenvNoCC }:
-let
-  protocolPkg = python3Packages.callPackage ./protocol-pkg.nix { };
-in
+{ lib, python3, stdenvNoCC }:
 stdenvNoCC.mkDerivation {
   pname = "sleepwalker-bench-validate";
   version = "0.1.0";
@@ -14,7 +11,7 @@ stdenvNoCC.mkDerivation {
   dontUnpack = true;
   dontBuild = true;
 
-  buildInputs = [ python3 protocolPkg ];
+  nativeBuildInputs = [ python3 ];
 
   installPhase = ''
     runHook preInstall
@@ -43,14 +40,14 @@ stdenvNoCC.mkDerivation {
         "artifacts": ["dir"],
     }
 
-    def fail(reason: str, field: str | None = None) -> int:
+    def fail(reason, field=None):
         payload = {"ok": False, "reason": reason}
         if field is not None:
             payload["field"] = field
         print(json.dumps(payload), file=sys.stderr)
         return 2
 
-    def main(argv: list[str]) -> int:
+    def main(argv):
         if len(argv) != 2:
             return fail("usage: sleepwalker-bench-validate <bench.toml>")
         path = Path(argv[1])
@@ -60,20 +57,20 @@ stdenvNoCC.mkDerivation {
             with path.open("rb") as fh:
                 cfg = tomllib.load(fh)
         except Exception as exc:
-            return fail(f"toml parse error: {exc}")
+            return fail("toml parse error: " + str(exc))
         missing = []
         for section, fields in REQUIRED_FIELDS.items():
             sect = cfg.get(section)
             if sect is None:
-                missing.append(f"{section}.*")
+                missing.append(section + ".*")
                 continue
             for f in fields:
                 if f not in sect or sect[f] in (None, ""):
-                    missing.append(f"{section}.{f}")
+                    missing.append(section + "." + f)
         if missing:
             return fail("missing required fields: " + ", ".join(missing))
         print(json.dumps({"ok": True, "fields": sorted(
-            f"{s}.{f}" for s, fs in REQUIRED_FIELDS.items() for f in fs
+            s + "." + f for s, fs in REQUIRED_FIELDS.items() for f in fs
         )}))
         return 0
 
