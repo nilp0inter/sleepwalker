@@ -1,0 +1,85 @@
+{
+  "protocol_version": 1,
+  "fixtures": [
+    {
+      "name": "valid_usb_key_space",
+      "seq_id": 1,
+      "opcode": 17,
+      "payload_hex": "2c",
+      "expected_status_chain": [
+        "received",
+        "queued",
+        "sent_to_usb"
+      ],
+      "notes": "Valid USB_KEY_SPACE key tap; firmware emits key-down then key-up.",
+      "bin": "valid_usb_key_space.bin"
+    },
+    {
+      "name": "arm",
+      "seq_id": 2,
+      "opcode": 1,
+      "payload_hex": "",
+      "expected_status_chain": [
+        "received",
+        "queued"
+      ],
+      "notes": "Arm the firmware safety state.",
+      "bin": "arm.bin"
+    },
+    {
+      "name": "disarm",
+      "seq_id": 3,
+      "opcode": 2,
+      "payload_hex": "",
+      "expected_status_chain": [
+        "received",
+        "queued"
+      ],
+      "notes": "Disarm the firmware safety state; releases all keys/buttons.",
+      "bin": "disarm.bin"
+    },
+    {
+      "name": "kill",
+      "seq_id": 4,
+      "opcode": 3,
+      "payload_hex": "",
+      "expected_status_chain": [
+        "received",
+        "queued"
+      ],
+      "notes": "Kill the firmware safety state; always accepted from bonded central.",
+      "bin": "kill.bin"
+    },
+    {
+      "name": "release_all",
+      "seq_id": 5,
+      "opcode": 4,
+      "payload_hex": "",
+      "expected_status_chain": [
+        "received",
+        "queued",
+        "sent_to_usb"
+      ],
+      "notes": "Release all currently held keys/buttons.",
+      "bin": "release_all.bin"
+    },
+    {
+      "name": "bad_crc",
+      "seq_id": 6,
+      "opcode": 17,
+      "payload_hex": "2c",
+      "expected_status": "bad_crc",
+      "notes": "Frame whose CRC-32 trailer does not match; must be rejected without HID output.",
+      "bin": "bad_crc.bin"
+    },
+    {
+      "name": "unsupported_opcode",
+      "seq_id": 7,
+      "opcode": 65534,
+      "payload_hex": "",
+      "expected_status": "unsupported_opcode",
+      "notes": "Frame with an opcode outside the known set; must be rejected without HID output.",
+      "bin": "unsupported_opcode.bin"
+    }
+  ]
+}

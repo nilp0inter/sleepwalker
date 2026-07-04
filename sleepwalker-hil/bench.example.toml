@@ -1,0 +1,53 @@
+# sleepwalker bench configuration (example).
+#
+# Copy to bench.toml and fill in real values for your physical bench.
+# Validated by `sleepwalker-bench-validate bench.toml` before any HIL
+# operation touches hardware. Required fields are marked REQUIRED; all
+# fields shown here are required for a complete keyboard smoke scenario.
+
+# ---- Android companion device (reached over USB/ADB) ----
+[android]
+# REQUIRED: ADB device serial. Find with `adb devices`.
+adb_serial = "XXXXXXXX"
+
+# ---- ESP32-S3 firmware device (reached over USB-to-TTL UART) ----
+[esp]
+# REQUIRED: UART port for auxiliary logs and runtime monitoring.
+# Typically /dev/ttyUSB0 or /dev/ttyACM0 on the harness host.
+uart_port = "/dev/ttyUSB0"
+# REQUIRED: Port used for autonomous flashing (may equal uart_port
+# when a USB-to-TTL with DTR/RTS wired to EN/GPIO0 is used).
+flash_port = "/dev/ttyUSB0"
+# Baud rate for UART logs. ESP-IDF default is 115200.
+uart_baud = 115200
+
+# ---- Sacrificial NixOS HID observer host (reached over SSH) ----
+[hid_observer]
+# REQUIRED: SSH target for the bootable sleepwalker-hid-observer-iso.
+# Format: user@host or user@host:port
+ssh_target = "observer@sleepwalker-hid-observer"
+# Optional: path to a dedicated known_hosts file to avoid polluting
+# user SSH state. The HIL operations should use this.
+known_hosts = "/etc/ssh/ssh_known_hosts_sleepwalker"
+# Optional: SSH identity file for noninteractive access.
+identity_file = "~/.ssh/sleepwalker_observer_ed25519"
+
+# ---- HID match criteria for the observer helper ----
+# The ESP32-S3 enumerates as a USB keyboard; match by stable descriptor
+# information rather than unstable /dev/input/eventX numbering.
+[hid_match]
+# REQUIRED: USB Vendor ID (hex, no 0x prefix).
+vid = "303A"
+# REQUIRED: USB Product ID (hex, no 0x prefix).
+pid = "4001"
+# Optional: USB product string for disambiguation.
+product = "Sleepwalker HID Keyboard"
+# Optional: USB manufacturer string.
+manufacturer = "Sleepwalker"
+
+# ---- Artifacts ----
+[artifacts]
+# REQUIRED: Directory where HIL smoke operations write structured
+# artifacts (bench config copy, command logs, logcat JSONL, ESP UART
+# JSONL, HID observer JSONL, summary JSON).
+dir = "./artifacts"
