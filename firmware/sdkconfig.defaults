@@ -1,0 +1,49 @@
+# ESP-IDF sdkconfig defaults for the sleepwalker ESP32-S3 firmware.
+#
+# Targets: ESP32-S3 with native USB device mode (TinyUSB) and BLE
+# peripheral (NimBLE). Auxiliary UART0 carries structured JSONL logs;
+# native USB is reserved for the TinyUSB HID keyboard device.
+
+# ---- Target / partition / boot ----
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# ---- FreeRTOS ----
+CONFIG_FREERTOS_HZ=1000
+
+# ---- Bluetooth / NimBLE (BLE-only, no Classic) ----
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_SM_LEGACY=n
+CONFIG_BT_NIMBLE_SM_SC=y
+# Bonding is the initial authorization boundary; CRC is corruption
+# detection only.
+CONFIG_BT_NIMBLE_MAX_BONDS=4
+CONFIG_BT_NIMBLE_SM_SC_DEBUG_KEYS=n
+
+# ---- Main task stack ----
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+# ---- TinyUSB (native USB device, HID keyboard) ----
+# ESP-IDF 5.5 uses esp_tinyusb from the IDF Component Manager.
+CONFIG_TINYUSB_HID_COUNT=1
+# Claim the deliberate sleepwalker HID keyboard product ID (0x4001) instead
+# of the TinyUSB generic HID auto-default (0x4004). Must match the observer
+# host udev rule (nix/observer-host.nix) and bench.toml [hid_match] pid.
+CONFIG_TINYUSB_DESC_USE_DEFAULT_PID=n
+CONFIG_TINYUSB_DESC_CUSTOM_PID=0x4001
+
+# ---- Logging ----
+# Native printf goes to the auxiliary UART; structured JSONL is emitted
+# by sw_log over the same UART. Reduce default ESP log noise.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# ---- Partition table ----
+# Default single-app factory partition is sufficient for the keyboard
+# smoke slice; no OTA tables needed yet.
+CONFIG_PARTITION_TABLE_SINGLE_APP=y

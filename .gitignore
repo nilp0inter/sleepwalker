@@ -271,3 +271,9 @@ pyrightconfig.json
 ### direnv ###
 .direnv
 .envrc
+firmware/build/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/dependencies.lock
+android/build/
+android/.gradle/

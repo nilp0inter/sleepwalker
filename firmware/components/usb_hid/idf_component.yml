@@ -1,0 +1,8 @@
+## IDF Component Manager manifest for the usb_hid component.
+## ESP-IDF 5.5 removed in-tree tinyusb.h; the HID device stack is now
+## provided by the esp_tinyusb component from the IDF Component Manager.
+dependencies:
+  espressif/esp_tinyusb:
+    version: "^2.0.0"
+  idf:
+    version: "^5.0"

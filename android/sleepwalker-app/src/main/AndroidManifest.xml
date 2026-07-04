@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- BLE transport: Android 12+ splits runtime permissions; pre-31 uses
+         legacy coarse location for scanning. We declare both sets. -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- The companion app runs only on the physical test device; require BLE. -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+
+    <application
+        android:allowBackup="false"
+        android:label="Sleepwalker"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false" />
+
+        <!-- ADB-facing broadcast receiver: agent sends explicit ADB broadcasts
+             with action and extras to drive commands. -->
+        <receiver
+            android:name=".adb.AdbCommandReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="io.sleepwalker.app.COMMAND" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Service-owned BLE connection/session. The receiver delegates
+             long-running BLE work here. -->
+        <service
+            android:name=".ble.SleepwalkerBleService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+    </application>
+</manifest>

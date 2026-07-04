@@ -30,6 +30,17 @@
       # Firmware/Android build tooling also targets x86_64-linux hosts.
       supportedSystems = [ "x86_64-linux" ];
 
+      # NixOS configuration for the sacrificial HID observer ISO (task 5.1).
+      # Built as a bootable ISO via config.system.build.isoImage.
+      observerIsoSystem = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
+          ./nix/observer-host.nix
+          { environment.systemPackages = [ (nixpkgs.legacyPackages.x86_64-linux.callPackage ./nix/observer-helper.nix { }) ]; }
+        ];
+      };
+
       # Overlay that exposes ESP-IDF and Android SDK tooling under sleepwalker-* names.
       sleepwalkerOverlay = final: prev: {
         # ESP-IDF toolchain from nixpkgs-esp-dev (Xtensa + idf.py + esptool).
@@ -48,6 +59,69 @@
 
         # Project helper: bench config validator (no hardware touched).
         sleepwalker-bench-validate = final.callPackage ./nix/bench-validate.nix { };
+        sleepwalker-fw-build = final.callPackage ./nix/fw-build.nix { cmake = final.cmake; ninja = final.ninja; python3 = final.python3; };
+        sleepwalker-fw-flash = final.callPackage ./nix/fw-flash.nix { cmake = final.cmake; ninja = final.ninja; python3 = final.python3; };
+        sleepwalker-fw-uart = final.callPackage ./nix/fw-uart.nix { };
+        sleepwalker-apk-build = final.callPackage ./nix/apk-build.nix {
+          jdk17 = final.jdk17;
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0
+            cmdline-tools-11-0
+            platform-tools
+            platforms-android-34
+          ]);
+        };
+        sleepwalker-apk-install = final.callPackage ./nix/apk-install.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0
+            cmdline-tools-11-0
+            platform-tools
+            platforms-android-34
+          ]);
+        };
+        sleepwalker-adb-logcat = final.callPackage ./nix/adb-logcat.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0
+            cmdline-tools-11-0
+            platform-tools
+            platforms-android-34
+          ]);
+        };
+        # ADB operations (task 6.4): one callPackage, six named binaries.
+        sleepwalker-adb-status = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-status;
+        sleepwalker-adb-connect = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-connect;
+        sleepwalker-adb-arm = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-arm;
+        sleepwalker-adb-inject-key = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-inject-key;
+        sleepwalker-adb-release-all = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-release-all;
+        sleepwalker-adb-kill = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-kill;
+        sleepwalker-hid-observe = final.callPackage ./nix/hid-observe.nix { };
+        sleepwalker-human-gate = final.callPackage ./nix/human-gate.nix { };
+        sleepwalker-artifacts = final.callPackage ./nix/artifacts.nix { };
+        sleepwalker-smoke-keyboard = final.callPackage ./nix/smoke-keyboard.nix { };
       };
 
       perSystem = system:
@@ -94,11 +168,28 @@
           ]);
         in
         {
-          # ---- Packages (collision-resistant sleepwalker-* names) ----
           packages = {
             sleepwalker-protocol-check = pkgs.sleepwalker-protocol-check;
             sleepwalker-bench-validate = pkgs.sleepwalker-bench-validate;
             sleepwalker-protocol = pkgs.sleepwalker-protocol;
+            sleepwalker-fw-build = pkgs.sleepwalker-fw-build;
+            sleepwalker-fw-flash = pkgs.sleepwalker-fw-flash;
+            sleepwalker-fw-uart = pkgs.sleepwalker-fw-uart;
+            sleepwalker-apk-build = pkgs.sleepwalker-apk-build;
+            sleepwalker-apk-install = pkgs.sleepwalker-apk-install;
+            sleepwalker-adb-logcat = pkgs.sleepwalker-adb-logcat;
+            sleepwalker-adb-status = pkgs.sleepwalker-adb-status;
+            sleepwalker-adb-connect = pkgs.sleepwalker-adb-connect;
+            sleepwalker-adb-arm = pkgs.sleepwalker-adb-arm;
+            sleepwalker-adb-inject-key = pkgs.sleepwalker-adb-inject-key;
+            sleepwalker-adb-release-all = pkgs.sleepwalker-adb-release-all;
+            sleepwalker-adb-kill = pkgs.sleepwalker-adb-kill;
+            sleepwalker-hid-observe = pkgs.sleepwalker-hid-observe;
+            sleepwalker-human-gate = pkgs.sleepwalker-human-gate;
+            sleepwalker-artifacts = pkgs.sleepwalker-artifacts;
+            sleepwalker-smoke-keyboard = pkgs.sleepwalker-smoke-keyboard;
+            # Bootable observer ISO (task 5.2). Built via nixosSystem.
+            sleepwalker-hid-observer-iso = observerIsoSystem.config.system.build.isoImage;
             default = pkgs.sleepwalker-protocol-check;
           };
 
@@ -115,120 +206,78 @@
               type = "app";
               program = "${pkgs.sleepwalker-bench-validate}/bin/sleepwalker-bench-validate";
             };
-
-            # Placeholder apps declared as a contract surface for later passes.
-            # They are intentionally stubs that fail loudly until their task is implemented,
-            # so the agent never silently no-ops on a missing primitive.
+            # No-hardware firmware build check (task 3.9 / 7.2).
             sleepwalker-fw-build = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-fw-build" ''
-                echo "sleepwalker-fw-build: not implemented in this foundation pass" >&2
-                exit 70  # EX_SOFTWARE
-              '' }/bin/sleepwalker-fw-build";
+              program = "${pkgs.sleepwalker-fw-build}/bin/sleepwalker-fw-build";
             };
 
+            # Side-effectful: flash firmware to ESP32-S3 over UART.
             sleepwalker-fw-flash = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-fw-flash" ''
-                echo "sleepwalker-fw-flash: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-fw-flash";
+              program = "${pkgs.sleepwalker-fw-flash}/bin/sleepwalker-fw-flash";
             };
 
+            # Side-effectful: capture ESP auxiliary UART JSONL logs.
             sleepwalker-fw-uart = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-fw-uart" ''
-                echo "sleepwalker-fw-uart: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-fw-uart";
+              program = "${pkgs.sleepwalker-fw-uart}/bin/sleepwalker-fw-uart";
             };
 
+            # No-hardware Android APK build check (task 4.8 / 7.3).
             sleepwalker-apk-build = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-apk-build" ''
-                echo "sleepwalker-apk-build: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-apk-build";
+              program = "${pkgs.sleepwalker-apk-build}/bin/sleepwalker-apk-build";
             };
 
+            # Side-effectful: install APK to the Android test device over ADB.
             sleepwalker-apk-install = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-apk-install" ''
-                echo "sleepwalker-apk-install: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-apk-install";
+              program = "${pkgs.sleepwalker-apk-install}/bin/sleepwalker-apk-install";
             };
 
+            # ADB operations (task 6.4): drive the companion over ADB broadcasts.
             sleepwalker-adb-status = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-adb-status" ''
-                echo "sleepwalker-adb-status: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-adb-status";
+              program = "${pkgs.sleepwalker-adb-status}/bin/sleepwalker-adb-status";
             };
-
             sleepwalker-adb-connect = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-adb-connect" ''
-                echo "sleepwalker-adb-connect: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-adb-connect";
+              program = "${pkgs.sleepwalker-adb-connect}/bin/sleepwalker-adb-connect";
             };
-
             sleepwalker-adb-arm = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-adb-arm" ''
-                echo "sleepwalker-adb-arm: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-adb-arm";
+              program = "${pkgs.sleepwalker-adb-arm}/bin/sleepwalker-adb-arm";
             };
-
             sleepwalker-adb-inject-key = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-adb-inject-key" ''
-                echo "sleepwalker-adb-inject-key: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-adb-inject-key";
+              program = "${pkgs.sleepwalker-adb-inject-key}/bin/sleepwalker-adb-inject-key";
             };
-
             sleepwalker-adb-release-all = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-adb-release-all" ''
-                echo "sleepwalker-adb-release-all: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-adb-release-all";
+              program = "${pkgs.sleepwalker-adb-release-all}/bin/sleepwalker-adb-release-all";
             };
-
             sleepwalker-adb-kill = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-adb-kill" ''
-                echo "sleepwalker-adb-kill: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-adb-kill";
+              program = "${pkgs.sleepwalker-adb-kill}/bin/sleepwalker-adb-kill";
             };
 
+            # Start remote HID observer over SSH (task 6.5).
             sleepwalker-hid-observe = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-hid-observe" ''
-                echo "sleepwalker-hid-observe: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-hid-observe";
+              program = "${pkgs.sleepwalker-hid-observe}/bin/sleepwalker-hid-observe";
             };
 
+            # Human gate: noti + poll observable condition (task 6.6).
             sleepwalker-human-gate = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-human-gate" ''
-                echo "sleepwalker-human-gate: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-human-gate";
+              program = "${pkgs.sleepwalker-human-gate}/bin/sleepwalker-human-gate";
             };
 
+            # Composed keyboard-only smoke scenario (task 6.8).
             sleepwalker-smoke-keyboard = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "sleepwalker-smoke-keyboard" ''
-                echo "sleepwalker-smoke-keyboard: not implemented in this foundation pass" >&2
-                exit 70
-              '' }/bin/sleepwalker-smoke-keyboard";
+              program = "${pkgs.sleepwalker-smoke-keyboard}/bin/sleepwalker-smoke-keyboard";
             };
           };
 
@@ -257,8 +306,14 @@
               nix
             ] ++ [
               # Expose project helper binaries in the dev shell.
-              self.packages.${system}.sleepwalker-protocol-check
-              self.packages.${system}.sleepwalker-bench-validate
+              pkgs.sleepwalker-protocol-check
+              pkgs.sleepwalker-bench-validate
+              pkgs.sleepwalker-fw-build
+              pkgs.sleepwalker-fw-flash
+              pkgs.sleepwalker-fw-uart
+              pkgs.sleepwalker-apk-build
+              pkgs.sleepwalker-apk-install
+              pkgs.sleepwalker-adb-logcat
             ];
 
             # Android SDK location expectations.
@@ -269,5 +324,10 @@
           };
         };
     in
-    flake-utils.lib.eachSystem supportedSystems perSystem;
+    flake-utils.lib.eachSystem supportedSystems perSystem // {
+      # NixOS configuration for the sacrificial HID observer host (task 5.1).
+      # The bootable ISO image is exposed as packages.x86_64-linux.sleepwalker-hid-observer-iso
+      # from inside perSystem (so it coexists with the other sleepwalker-* packages).
+      nixosConfigurations.sleepwalker-hid-observer = observerIsoSystem;
+    };
 }
