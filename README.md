@@ -1,17 +1,15 @@
 # sleepwalker
 
-An open-source hardware HID injector for autonomous, agent-driven interaction
-with real computing hardware — built to be embedded into larger automation
+An open-source hardware HID injector built to be embedded into larger automation
 projects and extended by the community.
 
 ## Why
 
-Real-world automation eventually hits the wall that headless APIs cannot cross:
-BIOS menus, full-disk-encryption prompts, pre-boot environments, OS installers,
-kiosk modes, and anything that lives below the OS API layer. The only honest way
-to drive those surfaces is to impersonate a physical keyboard and mouse at the
-USB HID level. `sleepwalker` exists to make that primitive open, safe, and
-usable from code.
+Real-world automation eventually hits the wall that headless APIs cannot
+cross: any interface that lives below the OS API layer. The only honest way
+to drive those surfaces is to impersonate a physical keyboard and mouse at
+the USB HID level. `sleepwalker` exists to make that primitive open, safe,
+and usable from code.
 
 ## What it is
 
@@ -37,24 +35,25 @@ against.
 
 ## Goals
 
-- Be the simplest credible open building block for hardware HID injection.
+- Provide a minimal, auditable primitive for impersonating physical input
+  devices at the USB HID level.
 - Keep the firmware small enough to audit by hand and stable enough to forget.
-- Make the Kotlin library the friendliest possible on-ramp — a consumer should
-  be able to type a string or click a button in a handful of lines.
-- Treat safety as a first-class concern: explicit arm/disarm, kill, release-all,
-  and human gates, never silent injection.
+- Make the Kotlin library the friendliest possible on-ramp — a consumer
+  should be able to type a string or click a button in a handful of lines.
+- Treat safety as a first-class concern: explicit arm/disarm, kill,
+  release-all, and human gates, never silent injection.
 - Reproduce the entire stack — firmware, library, app, and the host used to
   verify HID output — from source with Nix, so anyone can build on it.
 
 ## Non-goals
 
-- Not a stealth input device, not a Red Team tool, not an HID attack framework.
-  The threat model assumes the operator owns or is authorized to drive the
-  target host.
+- Not a stealth input device, not a Red Team tool, not an HID attack
+  framework. The threat model assumes the operator owns or is authorized to
+  drive the target host.
 - Not a general-purpose BLE HID stack — the surface is scoped to what an
   automation agent actually needs.
-- Not a closed appliance. The reference app exists to demonstrate the library;
-  the library is the product.
+- Not a closed appliance. The reference app exists to demonstrate the
+  library; the library is the product.
 
 ## Status
 
@@ -65,3 +64,12 @@ active design frontier.
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+## Development
+
+This project is designed for autonomous iteration by a coding agent. The
+repository provides deterministic build, flash, and verification commands
+(all prefixed `sleepwalker-*`) that an agent can compose into a closed loop:
+build firmware and APK, flash devices, inject HID commands, observe results
+on a sacrificial NixOS host, and produce structured artifacts for pass/fail
+diagnosis. See `AGENTS.md` for the full agent-facing interface.
