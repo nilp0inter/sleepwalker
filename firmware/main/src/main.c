@@ -4,7 +4,7 @@
 //   1. sw_log (auxiliary UART)
 //   2. hid_bridge (queue)
 //   3. safety (DISARMED)
-//   4. usb_hid (TinyUSB keyboard)
+//   4. usb_hid (TinyUSB composite keyboard + mouse)
 //   5. ble_uart (NimBLE custom UART service)
 //   6. HID worker task (owns TinyUSB report emission + safety checks)
 //
@@ -30,6 +30,13 @@ static const char *TAG = "sw.main";
 #define SW_WORKER_STACK      4096u
 #define SW_WORKER_PRIO       5u
 
+// Emit a release-all for both keyboard and mouse.
+static void sw_release_all(void)
+{
+    sw_usb_hid_keyboard_release();
+    sw_usb_hid_mouse_release();
+}
+
 // HID worker: dequeues from hid_bridge, applies safety, emits USB reports,
 // and notifies command lifecycle status on BLE TX.
 static void sw_hid_worker_task(void *arg)
@@ -43,7 +50,7 @@ static void sw_hid_worker_task(void *arg)
             uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
             if (sw_safety_check_timeout(now, SW_ARMED_TIMEOUT_MS)) {
                 sw_log_safety("timeout", NULL);
-                sw_usb_hid_keyboard_release();
+                sw_release_all();
                 sw_ble_uart_notify_status(0u, SW_STATUS_DISARMED, NULL, 0);
             }
             continue;
@@ -59,18 +66,18 @@ static void sw_hid_worker_task(void *arg)
             break;
         case SW_OPCODE_DISARM:
             sw_log_cmd("disarm", item.seq_id, NULL);
-            sw_usb_hid_keyboard_release();
+            sw_release_all();
             sw_ble_uart_notify_status(item.seq_id, SW_STATUS_SENT_TO_USB, NULL, 0);
             break;
         case SW_OPCODE_KILL:
             sw_log_cmd("kill", item.seq_id, NULL);
-            sw_usb_hid_keyboard_release();
+            sw_release_all();
             sw_ble_uart_notify_status(item.seq_id, SW_STATUS_SENT_TO_USB, NULL, 0);
             break;
         case SW_OPCODE_RELEASE_ALL:
             sw_log_cmd("release_all", item.seq_id, NULL);
             if (sw_safety_injection_allowed()) {
-                sw_usb_hid_keyboard_release();
+                sw_release_all();
                 sw_ble_uart_notify_status(item.seq_id, SW_STATUS_SENT_TO_USB, NULL, 0);
             } else {
                 sw_ble_uart_notify_status(item.seq_id, SW_STATUS_DISARMED, NULL, 0);
@@ -101,8 +108,7 @@ static void sw_hid_worker_task(void *arg)
                     sw_usb_hid_keyboard_release();
                 } else {
                     // KEY_UP of a specific usage: we can only release all
-                    // in the boot report model, so emit a release. This
-                    // matches the keyboard smoke slice (tap semantics).
+                    // in the boot report model, so emit a release.
                     sw_usb_hid_keyboard_release();
                 }
             } else {
@@ -118,6 +124,59 @@ static void sw_hid_worker_task(void *arg)
             sw_ble_uart_notify_status(item.seq_id, SW_STATUS_SENT_TO_USB, NULL, 0);
             break;
         }
+        case SW_OPCODE_MOUSE_REL_REPORT: {
+            // Validate payload length before HID dispatch.
+            uint8_t buttons = 0;
+            int8_t dx = 0, dy = 0, wheel = 0, pan = 0;
+            bool ok = sw_proto_decode_mouse_rel(
+                item.payload, item.payload_len,
+                &buttons, &dx, &dy, &wheel, &pan);
+            if (!ok) {
+                char fj[64];
+                snprintf(fj, sizeof(fj),
+                         "\"len\":%u,\"status\":\"malformed\"",
+                         (unsigned)item.payload_len);
+                sw_log_cmd("mouse_reject", item.seq_id, fj);
+                sw_ble_uart_notify_status(item.seq_id, SW_STATUS_MALFORMED,
+                                          NULL, 0);
+                break;
+            }
+            if (!sw_safety_injection_allowed()) {
+                uint8_t status = (st == SW_SAFETY_KILLED) ? SW_STATUS_KILLED
+                                                          : SW_STATUS_DISARMED;
+                char fj[64];
+                snprintf(fj, sizeof(fj),
+                         "\"buttons\":%u,\"status\":\"%s\"",
+                         buttons,
+                         status == SW_STATUS_KILLED ? "killed" : "disarmed");
+                sw_log_cmd("mouse_reject", item.seq_id, fj);
+                sw_ble_uart_notify_status(item.seq_id, status, NULL, 0);
+                break;
+            }
+            if (!sw_usb_hid_ready()) {
+                sw_log_cmd("mouse_reject", item.seq_id,
+                           "\"status\":\"usb_not_mounted\"");
+                sw_ble_uart_notify_status(item.seq_id, SW_STATUS_USB_NOT_MOUNTED,
+                                          NULL, 0);
+                break;
+            }
+            sw_log_cmd("mouse_rx", item.seq_id, NULL);
+            bool emitted = sw_usb_hid_mouse_rel_report(buttons, dx, dy, wheel, pan);
+            if (emitted) {
+                char fj[96];
+                snprintf(fj, sizeof(fj),
+                         "\"buttons\":%u,\"dx\":%d,\"dy\":%d,\"wheel\":%d,\"pan\":%d",
+                         buttons, (int)dx, (int)dy, (int)wheel, (int)pan);
+                sw_log_usb("mouse_sent", item.seq_id, fj);
+                sw_ble_uart_notify_status(item.seq_id, SW_STATUS_SENT_TO_USB,
+                                          NULL, 0);
+            } else {
+                sw_log_usb("mouse_send_failed", item.seq_id, NULL);
+                sw_ble_uart_notify_status(item.seq_id, SW_STATUS_USB_NOT_MOUNTED,
+                                          NULL, 0);
+            }
+            break;
+        }
         default:
             sw_log_cmd("unsupported", item.seq_id, NULL);
             sw_ble_uart_notify_status(item.seq_id, SW_STATUS_UNSUPPORTED_OPCODE, NULL, 0);
@@ -126,11 +185,11 @@ static void sw_hid_worker_task(void *arg)
     }
 }
 
-// BLE disconnect callback: force disarm + release-all.
+// BLE disconnect callback: force disarm + release-all (keyboard + mouse).
 static void sw_on_ble_disconnect(void)
 {
     sw_safety_force_disarm();
-    sw_usb_hid_keyboard_release();
+    sw_release_all();
     sw_log_safety("force_disarm", "\"reason\":\"ble_disconnect\"");
 }
 

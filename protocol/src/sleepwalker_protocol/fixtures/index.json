@@ -80,6 +80,72 @@
       "expected_status": "unsupported_opcode",
       "notes": "Frame with an opcode outside the known set; must be rejected without HID output.",
       "bin": "unsupported_opcode.bin"
+    },
+    {
+      "name": "mouse_click_down",
+      "seq_id": 16,
+      "opcode": 256,
+      "payload_hex": "0100000000",
+      "expected_status_chain": [
+        "received",
+        "queued",
+        "sent_to_usb"
+      ],
+      "notes": "Raw relative mouse report with the left button pressed; firmware emits a USB mouse report with BTN_LEFT down.",
+      "bin": "mouse_click_down.bin"
+    },
+    {
+      "name": "mouse_click_up",
+      "seq_id": 17,
+      "opcode": 256,
+      "payload_hex": "0000000000",
+      "expected_status_chain": [
+        "received",
+        "queued",
+        "sent_to_usb"
+      ],
+      "notes": "Raw relative mouse report with no buttons; firmware emits a USB mouse report with BTN_LEFT up (release).",
+      "bin": "mouse_click_up.bin"
+    },
+    {
+      "name": "mouse_move",
+      "seq_id": 18,
+      "opcode": 256,
+      "payload_hex": "000afb0000",
+      "expected_status_chain": [
+        "received",
+        "queued",
+        "sent_to_usb"
+      ],
+      "notes": "Raw relative mouse report with dx=10, dy=-5; firmware emits a USB mouse report with REL_X/REL_Y movement.",
+      "bin": "mouse_move.bin"
+    },
+    {
+      "name": "mouse_malformed_len",
+      "seq_id": 19,
+      "opcode": 256,
+      "payload_hex": "0001",
+      "expected_status": "malformed",
+      "notes": "MOUSE_REL_REPORT frame with a two-byte payload (not five); must be rejected as malformed before HID dispatch.",
+      "bin": "mouse_malformed_len.bin"
+    },
+    {
+      "name": "reserved_abs_pointer",
+      "seq_id": 20,
+      "opcode": 512,
+      "payload_hex": "",
+      "expected_status": "unsupported_opcode",
+      "notes": "Reserved future absolute pointer opcode; decodes as a valid frame but must be rejected with STATUS_UNSUPPORTED_OPCODE and no USB HID output.",
+      "bin": "reserved_abs_pointer.bin"
+    },
+    {
+      "name": "reserved_serial",
+      "seq_id": 21,
+      "opcode": 768,
+      "payload_hex": "",
+      "expected_status": "unsupported_opcode",
+      "notes": "Reserved future virtual serial opcode; decodes as a valid frame but must be rejected with STATUS_UNSUPPORTED_OPCODE and no USB CDC or HID output.",
+      "bin": "reserved_serial.bin"
     }
   ]
 }

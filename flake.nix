@@ -118,6 +118,26 @@
             build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
           ]);
         }).sleepwalker-adb-kill;
+        sleepwalker-adb-mouse-click = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-mouse-click;
+        sleepwalker-adb-mouse-move = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-mouse-move;
+        sleepwalker-adb-mouse-scroll = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-mouse-scroll;
+        sleepwalker-adb-mouse-release = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-mouse-release;
         sleepwalker-hid-observe = final.callPackage ./nix/hid-observe.nix { };
         sleepwalker-human-gate = final.callPackage ./nix/human-gate.nix { };
         sleepwalker-artifacts = final.callPackage ./nix/artifacts.nix { };
@@ -127,6 +147,13 @@
             sleepwalker-adb-connect sleepwalker-adb-arm
             sleepwalker-adb-inject-key sleepwalker-adb-release-all
             sleepwalker-adb-kill;
+        };
+        sleepwalker-smoke-mouse = final.callPackage ./nix/smoke-mouse.nix {
+          inherit (final) sleepwalker-bench-validate sleepwalker-fw-uart
+            sleepwalker-adb-logcat sleepwalker-hid-observe
+            sleepwalker-adb-connect sleepwalker-adb-arm
+            sleepwalker-adb-mouse-click sleepwalker-adb-mouse-move
+            sleepwalker-adb-mouse-release sleepwalker-adb-kill;
         };
       };
 
@@ -190,10 +217,15 @@
             sleepwalker-adb-inject-key = pkgs.sleepwalker-adb-inject-key;
             sleepwalker-adb-release-all = pkgs.sleepwalker-adb-release-all;
             sleepwalker-adb-kill = pkgs.sleepwalker-adb-kill;
+            sleepwalker-adb-mouse-click = pkgs.sleepwalker-adb-mouse-click;
+            sleepwalker-adb-mouse-move = pkgs.sleepwalker-adb-mouse-move;
+            sleepwalker-adb-mouse-scroll = pkgs.sleepwalker-adb-mouse-scroll;
+            sleepwalker-adb-mouse-release = pkgs.sleepwalker-adb-mouse-release;
             sleepwalker-hid-observe = pkgs.sleepwalker-hid-observe;
             sleepwalker-human-gate = pkgs.sleepwalker-human-gate;
             sleepwalker-artifacts = pkgs.sleepwalker-artifacts;
             sleepwalker-smoke-keyboard = pkgs.sleepwalker-smoke-keyboard;
+            sleepwalker-smoke-mouse = pkgs.sleepwalker-smoke-mouse;
             # Bootable observer ISO (task 5.2). Built via nixosSystem.
             sleepwalker-hid-observer-iso = observerIsoSystem.config.system.build.isoImage;
             default = pkgs.sleepwalker-protocol-check;
@@ -263,6 +295,22 @@
               type = "app";
               program = "${pkgs.sleepwalker-adb-release-all}/bin/sleepwalker-adb-release-all";
             };
+            sleepwalker-adb-mouse-click = {
+              type = "app";
+              program = "${pkgs.sleepwalker-adb-mouse-click}/bin/sleepwalker-adb-mouse-click";
+            };
+            sleepwalker-adb-mouse-move = {
+              type = "app";
+              program = "${pkgs.sleepwalker-adb-mouse-move}/bin/sleepwalker-adb-mouse-move";
+            };
+            sleepwalker-adb-mouse-scroll = {
+              type = "app";
+              program = "${pkgs.sleepwalker-adb-mouse-scroll}/bin/sleepwalker-adb-mouse-scroll";
+            };
+            sleepwalker-adb-mouse-release = {
+              type = "app";
+              program = "${pkgs.sleepwalker-adb-mouse-release}/bin/sleepwalker-adb-mouse-release";
+            };
             sleepwalker-adb-kill = {
               type = "app";
               program = "${pkgs.sleepwalker-adb-kill}/bin/sleepwalker-adb-kill";
@@ -284,6 +332,11 @@
             sleepwalker-smoke-keyboard = {
               type = "app";
               program = "${pkgs.sleepwalker-smoke-keyboard}/bin/sleepwalker-smoke-keyboard";
+            };
+            # Composed relative mouse smoke scenario (task 5.2).
+            sleepwalker-smoke-mouse = {
+              type = "app";
+              program = "${pkgs.sleepwalker-smoke-mouse}/bin/sleepwalker-smoke-mouse";
             };
           };
 

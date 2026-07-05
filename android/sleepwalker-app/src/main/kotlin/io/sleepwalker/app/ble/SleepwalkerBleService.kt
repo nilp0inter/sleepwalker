@@ -18,30 +18,35 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import io.sleepwalker.app.diagnostics.SwLog
-import io.sleepwalker.core.SleepwalkerCommands
+import io.sleepwalker.core.hid.LowLevelHid
+import io.sleepwalker.core.hid.LowLevelHidImpl
+import io.sleepwalker.core.hid.MouseOps
+import io.sleepwalker.core.hid.SessionStatusParser
+import io.sleepwalker.core.hid.toFrameBytes
 import io.sleepwalker.core.ble.BleUuids
 import io.sleepwalker.core.ble.BleWriter
-import io.sleepwalker.core.ble.StatusNotification
-import io.sleepwalker.core.protocol.Opcodes
-import io.sleepwalker.core.protocol.Status
 import io.sleepwalker.core.protocol.Usages
 import java.util.UUID
 
 /**
  * Service-owned BLE connection/session for the sleepwalker companion.
  *
+ * This service is an alternative entry point for command-driven
+ * operation. The ADB receiver is the canonical single BLE session owner
+ * for the HIL bench; this service exists for foreground/demo use and
+ * delegates command construction to the same `sleepwalker-core`
+ * library surfaces ([LowLevelHid], [MouseOps]).
+ *
  * Owns:
  *   - BLE scan / connect / bond state
  *   - GATT RX (write) and TX (notify) characteristics
  *   - MTU negotiation and MTU-aware frame writes
- *   - Status notification parsing and structured logcat diagnostics
- *
- * Commands arrive from AdbCommandReceiver via startForegroundService.
- * The service is the only component that performs BLE I/O.
+ *   - Status notification parsing via the library session boundary
  */
 class SleepwalkerBleService : Service() {
 
-    private val commands = SleepwalkerCommands()
+    private val hid: LowLevelHid = LowLevelHidImpl()
+    private val mouse: MouseOps = MouseOps(hid)
     private var bleAdapter: BluetoothAdapter? = null
     private var gatt: BluetoothGatt? = null
     private var rxChar: BluetoothGattCharacteristic? = null
@@ -53,9 +58,6 @@ class SleepwalkerBleService : Service() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val dev = result.device
             SwLog.ble("scan_result", fields = mapOf("name" to (dev.name ?: "?")))
-            // Connect to the first matching device; in a real bench the
-            // device address would come from bench config. For the smoke
-            // slice we connect to any device named "sleepwalker".
             if ((dev.name ?: "").contains("sleepwalker", ignoreCase = true)) {
                 bleAdapter?.bluetoothLeScanner?.stopScan(this)
                 targetDevice = dev
@@ -88,14 +90,12 @@ class SleepwalkerBleService : Service() {
                 SwLog.failure("characteristic_not_found")
                 return
             }
-            // Enable notifications on TX.
             g.setCharacteristicNotification(txChar, true)
             val cccd = txChar!!.getDescriptor(UUID.fromString(CCCD_UUID))
             if (cccd != null) {
                 cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                 g.writeDescriptor(cccd)
             }
-            // Request a larger MTU for frame writes.
             g.requestMtu(247)
             SwLog.ble("services_discovered")
         }
@@ -111,7 +111,7 @@ class SleepwalkerBleService : Service() {
 
         override fun onCharacteristicChanged(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             val data = characteristic.value ?: return
-            val note = StatusNotification.parse(data)
+            val note = SessionStatusParser.parse(data)
             if (note == null) {
                 SwLog.ack("parse_failed")
                 return
@@ -141,29 +141,54 @@ class SleepwalkerBleService : Service() {
             val cmd = intent.getStringExtra(EXTRA_CMD) ?: return START_NOT_STICKY
             val key = intent.getStringExtra(EXTRA_KEY)
             val seq = intent.getIntExtra(EXTRA_SEQ, 0)
-            handleCommand(cmd, key, seq)
+            val dx = intent.getIntExtra(EXTRA_DX, 0)
+            val dy = intent.getIntExtra(EXTRA_DY, 0)
+            val amount = intent.getIntExtra(EXTRA_AMOUNT, 0)
+            handleCommand(cmd, key, seq, dx, dy, amount)
         }
         return START_NOT_STICKY
     }
 
-    private fun handleCommand(cmd: String, key: String?, seq: Int) {
+    private fun handleCommand(cmd: String, key: String?, seq: Int,
+                              dx: Int, dy: Int, amount: Int) {
         SwLog.ble("command", seq, mapOf("cmd" to cmd, "key" to key))
         when (cmd) {
             "connect" -> startScan()
             "status" -> SwLog.ble("status", fields = mapOf(
                 "connected" to (gatt != null), "mtu" to negotiatedMtu))
-            "arm" -> sendFrame(commands.arm(seqId = seqOrNext(seq)), seq)
-            "disarm" -> sendFrame(commands.disarm(seqId = seqOrNext(seq)), seq)
-            "kill" -> sendFrame(commands.kill(seqId = seqOrNext(seq)), seq)
-            "release-all" -> sendFrame(commands.releaseAll(seqId = seqOrNext(seq)), seq)
+            "arm" -> sendOp(hid.arm(seqOrNext(seq)), seq)
+            "disarm" -> sendOp(hid.disarm(seqOrNext(seq)), seq)
+            "kill" -> sendOp(hid.kill(seqOrNext(seq)), seq)
+            "release-all" -> sendOp(hid.releaseAll(seqOrNext(seq)), seq)
             "inject" -> {
                 val usage = if (key != null) {
                     try { Usages.byName(key) } catch (_: Exception) {
                         SwLog.failure("unknown_key", seq, mapOf("key" to key)); return
                     }
                 } else Usages.USB_KEY_SPACE
-                sendFrame(commands.keyTap(usage, seqId = seqOrNext(seq)), seq)
+                sendOp(hid.keyTap(usage, seqOrNext(seq)), seq)
             }
+            "mouse-click" -> {
+                val ops = mouse.leftClick()
+                SwLog.frame("mouse_click", seq, mapOf("ops" to ops.size))
+                ops.forEach { sendOp(it, it.seqId) }
+            }
+            "mouse-move" -> {
+                val ops = mouse.move(dx, dy, seqOrNext(seq))
+                SwLog.frame("mouse_move", seq, mapOf("ops" to ops.size, "dx" to dx, "dy" to dy))
+                ops.forEach { sendOp(it, it.seqId) }
+            }
+            "mouse-scroll" -> {
+                val ops = mouse.scroll(amount, seqOrNext(seq))
+                SwLog.frame("mouse_scroll", seq, mapOf("ops" to ops.size, "amount" to amount))
+                ops.forEach { sendOp(it, it.seqId) }
+            }
+            "mouse-pan" -> {
+                val ops = mouse.pan(amount, seqOrNext(seq))
+                SwLog.frame("mouse_pan", seq, mapOf("ops" to ops.size, "amount" to amount))
+                ops.forEach { sendOp(it, it.seqId) }
+            }
+            "mouse-release" -> sendOp(mouse.releaseButtons(seqOrNext(seq)), seq)
             "disconnect" -> {
                 gatt?.disconnect()
                 SwLog.ble("disconnect_requested")
@@ -172,21 +197,20 @@ class SleepwalkerBleService : Service() {
         }
     }
 
-    private fun seqOrNext(seq: Int): Int = if (seq > 0) seq else commands.nextSeqId()
+    private fun seqOrNext(seq: Int): Int = if (seq > 0) seq else hid.nextSeqId()
 
-    private fun sendFrame(frame: ByteArray, seq: Int) {
+    private fun sendOp(op: io.sleepwalker.core.hid.LowLevelOp, seq: Int) {
+        val frame = op.toFrameBytes()
         val g = gatt ?: run {
             SwLog.failure("not_connected", seq); return
         }
         val rx = rxChar ?: run {
             SwLog.failure("no_rx_char", seq); return
         }
-        SwLog.frame("encode", seq, mapOf("len" to frame.size))
-        // MTU-aware chunking.
+        SwLog.frame("encode", seq, mapOf("len" to frame.size, "opcode" to op.name))
         val chunks = BleWriter.chunkFrame(frame, negotiatedMtu)
         for (chunk in chunks) {
             rx.value = chunk
-            // Use write-without-response for lower latency on small frames.
             rx.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
             g.writeCharacteristic(rx)
         }
@@ -213,6 +237,9 @@ class SleepwalkerBleService : Service() {
         const val EXTRA_CMD = "cmd"
         const val EXTRA_KEY = "key"
         const val EXTRA_SEQ = "seq"
+        const val EXTRA_DX = "dx"
+        const val EXTRA_DY = "dy"
+        const val EXTRA_AMOUNT = "amount"
         private const val CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb"
     }
 }

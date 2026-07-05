@@ -78,11 +78,23 @@
   # VID 303A is Espressif's USB vendor ID; PID 4001 is the sleepwalker
   # keyboard product id (matches bench.example.toml defaults).
   services.udev.extraRules = ''
-    # ESP32-S3 sleepwalker HID keyboard -> stable symlink + group input.
+    # ESP32-S3 sleepwalker HID composite keyboard+mouse -> stable symlinks.
+    # The composite HID interface may produce separate keyboard and mouse
+    # event devices; match by USB VID/PID so discovery is stable
+    # regardless of /dev/input/eventX numbering.
     KERNEL=="event*", SUBSYSTEM=="input", \
       ATTRS{idVendor}=="303a", ATTRS{idProduct}=="4001", \
-      GROUP="input", MODE="0660", \
+      GROUP="input", MODE="0660"
+    # Stable keyboard symlink for the keyboard smoke scenario.
+    KERNEL=="event*", SUBSYSTEM=="input", \
+      ATTRS{idVendor}=="303a", ATTRS{idProduct}=="4001", \
+      ENV{ID_INPUT_KEYBOARD}=="1", \
       SYMLINK+="input/by-id/sleepwalker-hid-keyboard"
+    # Stable mouse symlink for the relative mouse smoke scenario.
+    KERNEL=="event*", SUBSYSTEM=="input", \
+      ATTRS{idVendor}=="303a", ATTRS{idProduct}=="4001", \
+      ENV{ID_INPUT_MOUSE}=="1", \
+      SYMLINK+="input/by-id/sleepwalker-hid-mouse"
   '';
 
   # ---- ISO squashfs compression ----

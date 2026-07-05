@@ -1,7 +1,12 @@
-// usb_hid.c: TinyUSB HID keyboard device.
+// usb_hid.c: TinyUSB composite HID keyboard + relative mouse device.
 //
-// Descriptor: standard USB HID keyboard (usage page 0x07, 6-key rollover).
-// The HID worker task is the only caller of press/release.
+// Descriptor strategy: one HID interface with report IDs for keyboard (1),
+// relative mouse (2), and a reserved future absolute pointer (3) report.
+// This preserves identity for keyboard and relative mouse reports and
+// leaves room for a later absolute pointer report without redefining
+// existing report semantics.
+//
+// The HID worker task is the only caller of press/release/mouse reports.
 //
 // ESP-IDF 5.5 removed in-tree tinyusb.h; the HID device stack is provided
 // by the esp_tinyusb component (declared in idf_component.yml).
@@ -15,23 +20,31 @@
 
 #include <string.h>
 
-// HID report ID for the keyboard interface.
-#define SW_HID_REPORT_ID_KEYBOARD 1u
+// ---- HID report IDs (future-compatible identity) ----
+#define SW_HID_REPORT_ID_KEYBOARD  1u
+#define SW_HID_REPORT_ID_MOUSE     2u
+#define SW_HID_REPORT_ID_ABS_PTR   3u  // reserved for future absolute pointer
 
 // Standard HID keyboard report: modifier(1) + reserved(1) + keys(6).
 #define SW_HID_KBD_REPORT_LEN 8u
 
-// HID report descriptor: boot + report-mode keyboard.
+// Relative mouse report: buttons(1) + dx(1) + dy(1) + wheel(1) + pan(1).
+#define SW_HID_MOUSE_REPORT_LEN 5u
+
+// HID report descriptor: keyboard + relative mouse with report IDs.
+// TUD_HID_REPORT_DESC_KEYBOARD and TUD_HID_REPORT_DESC_MOUSE both accept
+// a report ID; using them in one descriptor makes the interface composite.
 static const uint8_t s_hid_report_desc[] = {
     TUD_HID_REPORT_DESC_KEYBOARD(HID_REPORT_ID(SW_HID_REPORT_ID_KEYBOARD)),
+    TUD_HID_REPORT_DESC_MOUSE(HID_REPORT_ID(SW_HID_REPORT_ID_MOUSE)),
 };
 
 // String descriptors.
 static const char *s_hid_string_desc[5] = {
     (char[]){0x09, 0x04},          // 0: English
     "Sleepwalker",                 // 1: Manufacturer
-    "Sleepwalker HID Keyboard",    // 2: Product
-    "000001",                      // 3: Serial
+    "Sleepwalker HID Composite",   // 2: Product
+    "000002",                      // 3: Serial
     "Sleepwalker HID interface",   // 4: HID
 };
 
@@ -87,6 +100,27 @@ bool sw_usb_hid_keyboard_release(void)
     return tud_hid_report(SW_HID_REPORT_ID_KEYBOARD, report, sizeof(report));
 }
 
+bool sw_usb_hid_mouse_rel_report(uint8_t buttons, int8_t dx, int8_t dy,
+                                 int8_t wheel, int8_t pan)
+{
+    if (!sw_usb_hid_ready()) {
+        return false;
+    }
+    uint8_t report[SW_HID_MOUSE_REPORT_LEN] = {
+        buttons,
+        (uint8_t)dx,
+        (uint8_t)dy,
+        (uint8_t)wheel,
+        (uint8_t)pan,
+    };
+    return tud_hid_report(SW_HID_REPORT_ID_MOUSE, report, sizeof(report));
+}
+
+bool sw_usb_hid_mouse_release(void)
+{
+    return sw_usb_hid_mouse_rel_report(0, 0, 0, 0, 0);
+}
+
 // ---- Required TinyUSB HID callbacks ----
 
 // Return the HID report descriptor for the given instance.
@@ -96,7 +130,7 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
     return s_hid_report_desc;
 }
 
-// GET_REPORT control request — return 0 to stall (not needed for boot keyboard).
+// GET_REPORT control request — return 0 to stall (not needed for boot).
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
                                hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen)
@@ -106,7 +140,7 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
     return 0;
 }
 
-// SET_REPORT control request — no-op for boot keyboard.
+// SET_REPORT control request — no-op.
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                            hid_report_type_t report_type,
                            uint8_t const *buffer, uint16_t bufsize)

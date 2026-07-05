@@ -149,14 +149,38 @@ static int sw_rx_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         sw_ble_uart_notify_status(seq, status, NULL, 0);
         return 0;
     }
-
     // 2. Opcode known?
     if (!sw_proto_is_known_opcode(frame.opcode)) {
-        char fj[64];
-        snprintf(fj, sizeof(fj), "\"opcode\":\"0x%04X\",\"status\":\"unsupported\"",
-                 frame.opcode);
+        // Classify reserved future namespaces (abs pointer, serial,
+        // capability) so the structured status identifies the device
+        // class. Private/fixture opcodes and out-of-range values also
+        // fall through to unsupported-opcode.
+        const char *ns = sw_proto_namespace_for(frame.opcode);
+        char fj[80];
+        if (ns != NULL) {
+            snprintf(fj, sizeof(fj),
+                     "\"opcode\":\"0x%04X\",\"namespace\":\"%s\",\"status\":\"unsupported\"",
+                     frame.opcode, ns);
+        } else {
+            snprintf(fj, sizeof(fj),
+                     "\"opcode\":\"0x%04X\",\"status\":\"unsupported\"",
+                     frame.opcode);
+        }
         sw_log_ble("rx", seq, fj);
         sw_ble_uart_notify_status(seq, SW_STATUS_UNSUPPORTED_OPCODE, NULL, 0);
+        return 0;
+    }
+
+    // 2b. MOUSE_REL_REPORT payload length validation at RX time.
+    // Reject malformed mouse payloads before HID dispatch.
+    if (frame.opcode == SW_OPCODE_MOUSE_REL_REPORT &&
+        frame.payload_len != SW_MOUSE_REL_PAYLOAD_LEN) {
+        char fj[80];
+        snprintf(fj, sizeof(fj),
+                 "\"opcode\":\"0x%04X\",\"len\":%u,\"status\":\"malformed\"",
+                 frame.opcode, (unsigned)frame.payload_len);
+        sw_log_ble("rx", seq, fj);
+        sw_ble_uart_notify_status(seq, SW_STATUS_MALFORMED, NULL, 0);
         return 0;
     }
 

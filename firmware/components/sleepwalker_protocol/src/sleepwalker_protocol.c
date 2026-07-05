@@ -131,8 +131,67 @@ bool sw_proto_is_known_opcode(uint16_t opcode)
     case SW_OPCODE_KEY_TAP:
     case SW_OPCODE_KEY_DOWN:
     case SW_OPCODE_KEY_UP:
+    case SW_OPCODE_MOUSE_REL_REPORT:
         return true;
     default:
         return false;
     }
+}
+
+const char *sw_proto_namespace_for(uint16_t opcode)
+{
+    if (opcode == SW_OPCODE_RESERVED) {
+        return NULL;
+    }
+    if (opcode >= SW_NS_SAFETY_LO && opcode <= SW_NS_SAFETY_HI) {
+        return "safety";
+    }
+    if (opcode >= SW_NS_KEYBOARD_LO && opcode <= SW_NS_KEYBOARD_HI) {
+        return "keyboard";
+    }
+    if (opcode >= SW_NS_REL_MOUSE_LO && opcode <= SW_NS_REL_MOUSE_HI) {
+        return "relative_mouse";
+    }
+    if (opcode >= SW_NS_ABS_POINTER_LO && opcode <= SW_NS_ABS_POINTER_HI) {
+        return "absolute_pointer_reserved";
+    }
+    if (opcode >= SW_NS_SERIAL_LO && opcode <= SW_NS_SERIAL_HI) {
+        return "serial_reserved";
+    }
+    if (opcode >= SW_NS_CAPABILITY_LO && opcode <= SW_NS_CAPABILITY_HI) {
+        return "capability_reserved";
+    }
+    if (opcode >= SW_NS_PRIVATE_LO && opcode <= SW_NS_PRIVATE_HI) {
+        return "private_fixture";
+    }
+    return NULL;
+}
+
+bool sw_proto_is_reserved_future(uint16_t opcode)
+{
+    const char *ns = sw_proto_namespace_for(opcode);
+    return ns != NULL &&
+           (strcmp(ns, "absolute_pointer_reserved") == 0 ||
+            strcmp(ns, "serial_reserved") == 0 ||
+            strcmp(ns, "capability_reserved") == 0);
+}
+
+bool sw_proto_decode_mouse_rel(const uint8_t *payload, uint16_t payload_len,
+                               uint8_t *out_buttons,
+                               int8_t *out_dx, int8_t *out_dy,
+                               int8_t *out_wheel, int8_t *out_pan)
+{
+    if (payload == NULL || payload_len != SW_MOUSE_REL_PAYLOAD_LEN) {
+        return false;
+    }
+    if (out_buttons == NULL || out_dx == NULL || out_dy == NULL ||
+        out_wheel == NULL || out_pan == NULL) {
+        return false;
+    }
+    *out_buttons = payload[0];
+    *out_dx = (int8_t)payload[1];
+    *out_dy = (int8_t)payload[2];
+    *out_wheel = (int8_t)payload[3];
+    *out_pan = (int8_t)payload[4];
+    return true;
 }

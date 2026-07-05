@@ -54,7 +54,22 @@ static const char *key_name(unsigned int c) {
     case KEY_A:        return "KEY_A";
     case KEY_B:        return "KEY_B";
     case KEY_C:        return "KEY_C";
+    // Mouse buttons (composite keyboard/mouse device).
+    case BTN_LEFT:     return "BTN_LEFT";
+    case BTN_RIGHT:    return "BTN_RIGHT";
+    case BTN_MIDDLE:   return "BTN_MIDDLE";
     default:           return "KEY_UNKNOWN";
+    }
+}
+
+// Common code names for EV_REL (relative mouse movement).
+static const char *rel_name(unsigned int c) {
+    switch (c) {
+    case REL_X:        return "REL_X";
+    case REL_Y:        return "REL_Y";
+    case REL_WHEEL:    return "REL_WHEEL";
+    case REL_HWHEEL:   return "REL_HWHEEL";
+    default:           return "REL_UNKNOWN";
     }
 }
 
@@ -70,6 +85,7 @@ static const char *syn_name(unsigned int c) {
 static const char *code_name(unsigned int t, unsigned int c) {
     if (t == EV_SYN) return syn_name(c);
     if (t == EV_KEY) return key_name(c);
+    if (t == EV_REL) return rel_name(c);
     return "CODE_UNKNOWN";
 }
 

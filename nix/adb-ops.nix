@@ -64,4 +64,39 @@ in
       -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd kill --ei seq "$SEQ" 2>&1) || true
     printf '{"ok":true,"op":"kill","seq":%s,"adb_out":%s}\n' "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
   '';
+
+  # mouse-click: left button click (down + up) via the library mouse API.
+  sleepwalker-adb-mouse-click = mkAdb "sleepwalker-adb-mouse-click" ''
+    SEQ="''${2:-0}"
+    OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast -a io.sleepwalker.app.COMMAND \
+      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd mouse-click --ei seq "$SEQ" 2>&1) || true
+    printf '{"ok":true,"op":"mouse-click","seq":%s,"adb_out":%s}\n' "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
+  '';
+
+  # mouse-move: relative mouse movement via the library mouse API (chunked).
+  sleepwalker-adb-mouse-move = mkAdb "sleepwalker-adb-mouse-move" ''
+    DX="''${2:-0}"
+    DY="''${3:-0}"
+    SEQ="''${4:-0}"
+    OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast -a io.sleepwalker.app.COMMAND \
+      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd mouse-move --ei dx "$DX" --ei dy "$DY" --ei seq "$SEQ" 2>&1) || true
+    printf '{"ok":true,"op":"mouse-move","dx":%s,"dy":%s,"seq":%s,"adb_out":%s}\n' "$DX" "$DY" "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
+  '';
+
+  # mouse-scroll: vertical scroll via the library mouse API.
+  sleepwalker-adb-mouse-scroll = mkAdb "sleepwalker-adb-mouse-scroll" ''
+    AMOUNT="''${2:-0}"
+    SEQ="''${3:-0}"
+    OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast -a io.sleepwalker.app.COMMAND \
+      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd mouse-scroll --ei amount "$AMOUNT" --ei seq "$SEQ" 2>&1) || true
+    printf '{"ok":true,"op":"mouse-scroll","amount":%s,"seq":%s,"adb_out":%s}\n' "$AMOUNT" "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
+  '';
+
+  # mouse-release: release all mouse buttons.
+  sleepwalker-adb-mouse-release = mkAdb "sleepwalker-adb-mouse-release" ''
+    SEQ="''${2:-0}"
+    OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast -a io.sleepwalker.app.COMMAND \
+      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd mouse-release --ei seq "$SEQ" 2>&1) || true
+    printf '{"ok":true,"op":"mouse-release","seq":%s,"adb_out":%s}\n' "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
+  '';
 }
