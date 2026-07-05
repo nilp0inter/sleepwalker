@@ -99,4 +99,13 @@ in
       -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd mouse-release --ei seq "$SEQ" 2>&1) || true
     printf '{"ok":true,"op":"mouse-release","seq":%s,"adb_out":%s}\n' "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
   '';
+
+  # type-text: type a string of text.
+  sleepwalker-adb-type-text = mkAdb "sleepwalker-adb-type-text" ''
+    TEXT="''${2:-}"
+    SEQ="''${3:-0}"
+    OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast -a io.sleepwalker.app.COMMAND \
+      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd type-text --es text "$TEXT" --ei seq "$SEQ" 2>&1) || true
+    printf '{"ok":true,"op":"type-text","text":"%s","seq":%s,"adb_out":%s}\n' "$TEXT" "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
+  '';
 }

@@ -61,6 +61,17 @@ object SeedKeymapDatabase : KeymapDatabase {
     private const val ENTER = 0x28
     private const val ESCAPE = 0x29
     private const val SPACE = 0x2C
+    private const val MINUS = 0x2D
+    private const val EQUAL = 0x2E
+    private const val LEFTBRACE = 0x2F
+    private const val RIGHTBRACE = 0x30
+    private const val BACKSLASH = 0x31
+    private const val SEMICOLON = 0x33
+    private const val APOSTROPHE = 0x34
+    private const val GRAVE = 0x35
+    private const val COMMA = 0x36
+    private const val DOT = 0x37
+    private const val SLASH = 0x38
 
     private val US_ENTRIES: List<KeymapEntry> = listOf(
         // Lowercase letters.
@@ -103,6 +114,18 @@ object SeedKeymapDatabase : KeymapDatabase {
         KeymapEntry('%', NUM_5, SHIFT), KeymapEntry('^', NUM_6, SHIFT),
         KeymapEntry('&', NUM_7, SHIFT), KeymapEntry('*', NUM_8, SHIFT),
         KeymapEntry('(', NUM_9, SHIFT), KeymapEntry(')', NUM_0, SHIFT),
+        // Punctuation keys.
+        KeymapEntry('-', MINUS, 0), KeymapEntry('_', MINUS, SHIFT),
+        KeymapEntry('=', EQUAL, 0), KeymapEntry('+', EQUAL, SHIFT),
+        KeymapEntry('[', LEFTBRACE, 0), KeymapEntry('{', LEFTBRACE, SHIFT),
+        KeymapEntry(']', RIGHTBRACE, 0), KeymapEntry('}', RIGHTBRACE, SHIFT),
+        KeymapEntry('\\', BACKSLASH, 0), KeymapEntry('|', BACKSLASH, SHIFT),
+        KeymapEntry(';', SEMICOLON, 0), KeymapEntry(':', SEMICOLON, SHIFT),
+        KeymapEntry('\'', APOSTROPHE, 0), KeymapEntry('"', APOSTROPHE, SHIFT),
+        KeymapEntry('`', GRAVE, 0), KeymapEntry('~', GRAVE, SHIFT),
+        KeymapEntry(',', COMMA, 0), KeymapEntry('<', COMMA, SHIFT),
+        KeymapEntry('.', DOT, 0), KeymapEntry('>', DOT, SHIFT),
+        KeymapEntry('/', SLASH, 0), KeymapEntry('?', SLASH, SHIFT),
         // Control keys.
         KeymapEntry(' ', SPACE, 0),
         KeymapEntry('\n', ENTER, 0),

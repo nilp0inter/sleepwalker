@@ -1,5 +1,7 @@
-# hid-observer-nixos-iso
+## Purpose
+Sacrificial NixOS-based HID observer system configuration and helpers, enabling automated and secure verification of physical USB HID inputs.
 
+## Requirements
 ### Requirement: Flake-built observer ISO
 The project SHALL provide a flake-built bootable NixOS ISO for the sacrificial HID observer host. The ISO SHALL include a minimal system configuration for observing ESP32-S3 USB HID input events over SSH.
 
@@ -61,3 +63,14 @@ The HID observer invocation SHALL wait for all requested device paths to appear 
 #### Scenario: Devices not present after timeout
 - **WHEN** device paths do not appear within the bounded timeout
 - **THEN** the observer reports a structured failure indicating devices were not present after preflight, rather than a silent ENOENT
+
+### Requirement: Text smoke key decoding
+The observer helper SHALL decode the keyboard keys needed by the high-level text smoke, including letters, digits, Shift, and existing space/sync events.
+
+#### Scenario: Letter and digit observed
+- **WHEN** the device emits `USB_KEY_A` or `USB_KEY_1`
+- **THEN** the observer helper emits symbolic JSONL events for `KEY_A` or `KEY_1`
+
+#### Scenario: Shift observed
+- **WHEN** the device emits a Shift modifier press or release
+- **THEN** the observer helper emits symbolic JSONL events for `KEY_LEFTSHIFT`

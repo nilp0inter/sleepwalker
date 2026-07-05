@@ -125,6 +125,18 @@ static const char *key_name(unsigned int c) {
     case KEY_8:         return "KEY_8";
     case KEY_9:         return "KEY_9";
     case KEY_0:         return "KEY_0";
+    // Punctuation keys
+    case KEY_MINUS:     return "KEY_MINUS";
+    case KEY_EQUAL:     return "KEY_EQUAL";
+    case KEY_LEFTBRACE: return "KEY_LEFTBRACE";
+    case KEY_RIGHTBRACE:return "KEY_RIGHTBRACE";
+    case KEY_BACKSLASH: return "KEY_BACKSLASH";
+    case KEY_SEMICOLON: return "KEY_SEMICOLON";
+    case KEY_APOSTROPHE:return "KEY_APOSTROPHE";
+    case KEY_GRAVE:     return "KEY_GRAVE";
+    case KEY_COMMA:     return "KEY_COMMA";
+    case KEY_DOT:       return "KEY_DOT";
+    case KEY_SLASH:     return "KEY_SLASH";
     // Mouse buttons (composite keyboard/mouse device).
     case BTN_LEFT:      return "BTN_LEFT";
     case BTN_RIGHT:     return "BTN_RIGHT";

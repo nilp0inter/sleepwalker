@@ -23,6 +23,16 @@
 
         <activity
             android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- BLE connection/session service -->
+        <service
+            android:name=".ble.SleepwalkerBleService"
             android:exported="false" />
 
         <!-- ADB-facing broadcast receiver: agent sends explicit ADB broadcasts

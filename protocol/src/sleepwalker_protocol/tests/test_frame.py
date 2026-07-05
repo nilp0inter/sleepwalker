@@ -40,7 +40,10 @@ from sleepwalker_protocol.status import (
     STATUS_KILLED,
     is_known_status,
 )
-from sleepwalker_protocol.usages import USB_KEY_SPACE, usage_by_name, usage_by_usb, usage_by_evdev
+from sleepwalker_protocol.usages import (
+    USB_KEY_SPACE, USB_KEY_NONE, USAGE_REGISTRY,
+    usage_by_name, usage_by_usb, usage_by_evdev
+)
 
 
 class TestFrameLayout:
@@ -160,6 +163,68 @@ class TestSymbolicUsages:
 
     def test_usage_by_evdev_resolves(self):
         assert usage_by_evdev(0x39) is USB_KEY_SPACE
+
+    def test_usages_parity(self):
+        expected = {
+            "USB_KEY_NONE": (0x00, 0),
+            "USB_KEY_A": (0x04, 30),
+            "USB_KEY_B": (0x05, 48),
+            "USB_KEY_C": (0x06, 46),
+            "USB_KEY_D": (0x07, 32),
+            "USB_KEY_E": (0x08, 18),
+            "USB_KEY_F": (0x09, 33),
+            "USB_KEY_G": (0x0A, 34),
+            "USB_KEY_H": (0x0B, 35),
+            "USB_KEY_I": (0x0C, 23),
+            "USB_KEY_J": (0x0D, 36),
+            "USB_KEY_K": (0x0E, 37),
+            "USB_KEY_L": (0x0F, 38),
+            "USB_KEY_M": (0x10, 50),
+            "USB_KEY_N": (0x11, 49),
+            "USB_KEY_O": (0x12, 24),
+            "USB_KEY_P": (0x13, 25),
+            "USB_KEY_Q": (0x14, 16),
+            "USB_KEY_R": (0x15, 19),
+            "USB_KEY_S": (0x16, 31),
+            "USB_KEY_T": (0x17, 20),
+            "USB_KEY_U": (0x18, 22),
+            "USB_KEY_V": (0x19, 47),
+            "USB_KEY_W": (0x1A, 17),
+            "USB_KEY_X": (0x1B, 45),
+            "USB_KEY_Y": (0x1C, 21),
+            "USB_KEY_Z": (0x1D, 44),
+            "USB_KEY_1": (0x1E, 2),
+            "USB_KEY_2": (0x1F, 3),
+            "USB_KEY_3": (0x20, 4),
+            "USB_KEY_4": (0x21, 5),
+            "USB_KEY_5": (0x22, 6),
+            "USB_KEY_6": (0x23, 7),
+            "USB_KEY_7": (0x24, 8),
+            "USB_KEY_8": (0x25, 9),
+            "USB_KEY_9": (0x26, 10),
+            "USB_KEY_0": (0x27, 11),
+            "USB_KEY_ENTER": (0x28, 28),
+            "USB_KEY_ESCAPE": (0x29, 1),
+            "USB_KEY_SPACE": (0x2C, 57),
+            "USB_KEY_MINUS": (0x2D, 12),
+            "USB_KEY_EQUAL": (0x2E, 13),
+            "USB_KEY_LEFTBRACE": (0x2F, 26),
+            "USB_KEY_RIGHTBRACE": (0x30, 27),
+            "USB_KEY_BACKSLASH": (0x31, 43),
+            "USB_KEY_SEMICOLON": (0x33, 39),
+            "USB_KEY_APOSTROPHE": (0x34, 40),
+            "USB_KEY_GRAVE": (0x35, 41),
+            "USB_KEY_COMMA": (0x36, 51),
+            "USB_KEY_DOT": (0x37, 52),
+            "USB_KEY_SLASH": (0x38, 53),
+            "USB_KEY_LEFTSHIFT": (0xE1, 42),
+        }
+        assert len(USAGE_REGISTRY) == len(expected)
+        for name, (usb, evdev) in expected.items():
+            u = USAGE_REGISTRY[name]
+            assert u.name == name
+            assert u.usb_usage == usb
+            assert u.evdev_code == evdev
 
     def test_unknown_name_raises(self):
         with pytest.raises(KeyError):

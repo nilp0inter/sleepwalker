@@ -78,15 +78,25 @@ bool sw_usb_hid_ready(void)
     return tud_mounted();
 }
 
+static uint8_t s_active_modifiers = 0;
+
 bool sw_usb_hid_keyboard_press(uint8_t usb_usage)
 {
     if (!sw_usb_hid_ready()) {
         return false;
     }
-    // Standard 8-byte boot keyboard report: modifier=0, reserved=0, 1 key.
+    // Map modifier keys (0xE0..0xE7) to the report modifier byte
+    if (usb_usage >= 0xE0 && usb_usage <= 0xE7) {
+        uint8_t bit = usb_usage - 0xE0;
+        s_active_modifiers |= (1 << bit);
+    }
+    // Standard 8-byte boot keyboard report: modifier + reserved + keys.
     uint8_t report[SW_HID_KBD_REPORT_LEN];
     memset(report, 0, sizeof(report));
-    report[2] = usb_usage; // first key slot
+    report[0] = s_active_modifiers;
+    if (!(usb_usage >= 0xE0 && usb_usage <= 0xE7)) {
+        report[2] = usb_usage; // first key slot
+    }
     return tud_hid_report(SW_HID_REPORT_ID_KEYBOARD, report, sizeof(report));
 }
 
@@ -95,6 +105,7 @@ bool sw_usb_hid_keyboard_release(void)
     if (!sw_usb_hid_ready()) {
         return false;
     }
+    s_active_modifiers = 0; // Clear modifier state
     uint8_t report[SW_HID_KBD_REPORT_LEN];
     memset(report, 0, sizeof(report));
     return tud_hid_report(SW_HID_REPORT_ID_KEYBOARD, report, sizeof(report));

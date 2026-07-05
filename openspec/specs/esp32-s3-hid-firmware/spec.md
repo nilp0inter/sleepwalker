@@ -1,5 +1,7 @@
-# esp32-s3-hid-firmware
+## Purpose
+ESP32-S3 firmware implementing BLE GATT services, Sleepwalker command frame decoding, and TinyUSB HID keyboard and relative mouse emulation.
 
+## Requirements
 ### Requirement: Raw relative mouse HID emission
 The ESP32-S3 firmware SHALL accept valid `MOUSE_REL_REPORT` commands while armed and emit the corresponding TinyUSB relative mouse report.
 
@@ -42,3 +44,10 @@ The firmware SHALL emit structured auxiliary UART diagnostics for mouse command 
 #### Scenario: Mouse command logged
 - **WHEN** firmware receives and emits a valid `MOUSE_REL_REPORT`
 - **THEN** auxiliary UART diagnostics include structured events for the command lifecycle with the command sequence identifier
+
+### Requirement: Modifier key tracking
+The firmware keyboard HID emission SHALL track active modifier key states and include them in the modifier byte of standard USB keyboard reports.
+
+#### Scenario: Modifier state tracked
+- **WHEN** the firmware receives a `KEY_DOWN` command for a modifier key
+- **THEN** it sets the corresponding modifier bit and includes it in all subsequent keyboard reports until a release-all or `KEY_UP` command clears it

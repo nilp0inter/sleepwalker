@@ -6,6 +6,7 @@ import io.sleepwalker.core.keymap.HostProfile
 import io.sleepwalker.core.keymap.KeymapDatabase
 import io.sleepwalker.core.keymap.SeedKeymapDatabase
 import io.sleepwalker.core.protocol.HidUsage
+import io.sleepwalker.core.protocol.Usages
 
 /**
  * Structured text rendering failure.
@@ -62,28 +63,30 @@ class TextPlanner(
      * operations for that request.
      */
     fun plan(text: String, profile: HostProfile): TextPlan {
-        // Resolve the host profile against the bundled keymap database.
-        if (!database.contains(profile)) {
-            return TextPlan(plan = null,
-                failure = TextRenderingFailure.MissingLayout(profile))
-        }
-        val ops = ArrayList<LowLevelOp>(text.length * 2)
+        val entries = database.lookup(profile)
+            ?: return TextPlan(plan = null, failure = TextRenderingFailure.MissingLayout(profile))
+
+        val entryMap = entries.associateBy { it.ch }
+        val ops = ArrayList<LowLevelOp>(text.length * 3)
+
         for (ch in text) {
-            val entry = SeedKeymapDatabase.entryFor(ch)
-                ?: return TextPlan(plan = null,
-                    failure = TextRenderingFailure.UnrepresentableGlyph(ch, profile))
-            // For a basic seed planner, we emit a KEY_TAP for each
-            // character. Modifier state is encoded in the keymap entry
-            // but the current keyboard opcode path carries only a
-            // single usage byte; the seed dataset chooses characters
-            // that are representable as single-usage taps. Future
-            // keymap work can plan modifier presses here.
-            val usage = HidUsage(
+            val entry = entryMap[ch]
+                ?: return TextPlan(plan = null, failure = TextRenderingFailure.UnrepresentableGlyph(ch, profile))
+
+            val usage = Usages.byUsb(entry.usage) ?: HidUsage(
                 name = "USB_USAGE_0x${"%02x".format(entry.usage)}",
                 usbUsage = entry.usage,
                 evdevCode = 0,
             )
-            ops.add(hid.keyTap(usage))
+
+            val isShifted = (entry.modifiers and 0x02) != 0
+            if (isShifted) {
+                ops.add(hid.keyDown(Usages.USB_KEY_LEFTSHIFT))
+                ops.add(hid.keyTap(usage))
+                ops.add(hid.keyUp(Usages.USB_KEY_LEFTSHIFT))
+            } else {
+                ops.add(hid.keyTap(usage))
+            }
         }
         return TextPlan(plan = ops, failure = null)
     }

@@ -113,11 +113,67 @@ class FrameTest {
     }
 
     @Test fun usageRegistry() {
-        val space = Usages.byName("USB_KEY_SPACE")
-        assertEquals(0x2c, space.usbUsage)
-        assertEquals(57, space.evdevCode)
-        assertEquals(space, Usages.byUsb(0x2c))
-        assertEquals(space, Usages.byEvdev(57))
+        val expected = mapOf(
+            "USB_KEY_NONE" to Pair(0x00, 0),
+            "USB_KEY_A" to Pair(0x04, 30),
+            "USB_KEY_B" to Pair(0x05, 48),
+            "USB_KEY_C" to Pair(0x06, 46),
+            "USB_KEY_D" to Pair(0x07, 32),
+            "USB_KEY_E" to Pair(0x08, 18),
+            "USB_KEY_F" to Pair(0x09, 33),
+            "USB_KEY_G" to Pair(0x0A, 34),
+            "USB_KEY_H" to Pair(0x0B, 35),
+            "USB_KEY_I" to Pair(0x0C, 23),
+            "USB_KEY_J" to Pair(0x0D, 36),
+            "USB_KEY_K" to Pair(0x0E, 37),
+            "USB_KEY_L" to Pair(0x0F, 38),
+            "USB_KEY_M" to Pair(0x10, 50),
+            "USB_KEY_N" to Pair(0x11, 49),
+            "USB_KEY_O" to Pair(0x12, 24),
+            "USB_KEY_P" to Pair(0x13, 25),
+            "USB_KEY_Q" to Pair(0x14, 16),
+            "USB_KEY_R" to Pair(0x15, 19),
+            "USB_KEY_S" to Pair(0x16, 31),
+            "USB_KEY_T" to Pair(0x17, 20),
+            "USB_KEY_U" to Pair(0x18, 22),
+            "USB_KEY_V" to Pair(0x19, 47),
+            "USB_KEY_W" to Pair(0x1A, 17),
+            "USB_KEY_X" to Pair(0x1B, 45),
+            "USB_KEY_Y" to Pair(0x1C, 21),
+            "USB_KEY_Z" to Pair(0x1D, 44),
+            "USB_KEY_1" to Pair(0x1E, 2),
+            "USB_KEY_2" to Pair(0x1F, 3),
+            "USB_KEY_3" to Pair(0x20, 4),
+            "USB_KEY_4" to Pair(0x21, 5),
+            "USB_KEY_5" to Pair(0x22, 6),
+            "USB_KEY_6" to Pair(0x23, 7),
+            "USB_KEY_7" to Pair(0x24, 8),
+            "USB_KEY_8" to Pair(0x25, 9),
+            "USB_KEY_9" to Pair(0x26, 10),
+            "USB_KEY_0" to Pair(0x27, 11),
+            "USB_KEY_ENTER" to Pair(0x28, 28),
+            "USB_KEY_ESCAPE" to Pair(0x29, 1),
+            "USB_KEY_SPACE" to Pair(0x2C, 57),
+            "USB_KEY_MINUS" to Pair(0x2D, 12),
+            "USB_KEY_EQUAL" to Pair(0x2E, 13),
+            "USB_KEY_LEFTBRACE" to Pair(0x2F, 26),
+            "USB_KEY_RIGHTBRACE" to Pair(0x30, 27),
+            "USB_KEY_BACKSLASH" to Pair(0x31, 43),
+            "USB_KEY_SEMICOLON" to Pair(0x33, 39),
+            "USB_KEY_APOSTROPHE" to Pair(0x34, 40),
+            "USB_KEY_GRAVE" to Pair(0x35, 41),
+            "USB_KEY_COMMA" to Pair(0x36, 51),
+            "USB_KEY_DOT" to Pair(0x37, 52),
+            "USB_KEY_SLASH" to Pair(0x38, 53),
+            "USB_KEY_LEFTSHIFT" to Pair(0xE1, 42),
+        )
+        assertEquals(expected.size, Usages.REGISTRY.size)
+        for ((name, pair) in expected) {
+            val u = Usages.byName(name)
+            assertEquals(name, u.name)
+            assertEquals(pair.first, u.usbUsage)
+            assertEquals(pair.second, u.evdevCode)
+        }
     }
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it.toInt() and 0xFF) }
