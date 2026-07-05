@@ -61,6 +61,7 @@
         sleepwalker-bench-validate = final.callPackage ./nix/bench-validate.nix { };
         sleepwalker-fw-build = final.callPackage ./nix/fw-build.nix { cmake = final.cmake; ninja = final.ninja; python3 = final.python3; };
         sleepwalker-fw-flash = final.callPackage ./nix/fw-flash.nix { cmake = final.cmake; ninja = final.ninja; python3 = final.python3; };
+        sleepwalker-fw-flash-usb = final.callPackage ./nix/fw-flash-usb.nix { python3 = final.python3; esptool = final.esptool; };
         sleepwalker-fw-uart = final.callPackage ./nix/fw-uart.nix { };
         sleepwalker-apk-build = final.callPackage ./nix/apk-build.nix {
           jdk17 = final.jdk17;
@@ -233,6 +234,7 @@
             sleepwalker-protocol = pkgs.sleepwalker-protocol;
             sleepwalker-fw-build = pkgs.sleepwalker-fw-build;
             sleepwalker-fw-flash = pkgs.sleepwalker-fw-flash;
+            sleepwalker-fw-flash-usb = pkgs.sleepwalker-fw-flash-usb;
             sleepwalker-fw-uart = pkgs.sleepwalker-fw-uart;
             sleepwalker-apk-build = pkgs.sleepwalker-apk-build;
             sleepwalker-apk-install = pkgs.sleepwalker-apk-install;
@@ -283,7 +285,11 @@
               type = "app";
               program = "${pkgs.sleepwalker-fw-flash}/bin/sleepwalker-fw-flash";
             };
-
+            # Side-effectful: flash firmware to ESP32-S3 over native USB.
+            sleepwalker-fw-flash-usb = {
+              type = "app";
+              program = "${pkgs.sleepwalker-fw-flash-usb}/bin/sleepwalker-fw-flash-usb";
+            };
             # Side-effectful: capture ESP auxiliary UART JSONL logs.
             sleepwalker-fw-uart = {
               type = "app";
@@ -407,6 +413,7 @@
               pkgs.sleepwalker-bench-validate
               pkgs.sleepwalker-fw-build
               pkgs.sleepwalker-fw-flash
+              pkgs.sleepwalker-fw-flash-usb
               pkgs.sleepwalker-fw-uart
               pkgs.sleepwalker-apk-build
               pkgs.sleepwalker-apk-install
