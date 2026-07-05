@@ -144,7 +144,16 @@
             build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
           ]);
         }).sleepwalker-adb-type-text;
+        sleepwalker-adb-type-text-encoded = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-type-text-encoded;
         sleepwalker-hid-observe = final.callPackage ./nix/hid-observe.nix { };
+        sleepwalker-text-sink-start = final.callPackage ./nix/text-sink-start.nix { };
+        sleepwalker-text-sink-ctl = final.callPackage ./nix/text-sink-ctl.nix { };
+        sleepwalker-text-sink-read = final.callPackage ./nix/text-sink-read.nix { };
+        sleepwalker-observer-prepare = final.callPackage ./nix/observer-prepare.nix { };
         sleepwalker-human-gate = final.callPackage ./nix/human-gate.nix { };
         sleepwalker-esp-reset = final.callPackage ./nix/esp-reset.nix { };
         sleepwalker-artifacts = final.callPackage ./nix/artifacts.nix { };
@@ -164,6 +173,15 @@
           androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
             build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
           ]);
+        };
+        sleepwalker-smoke-text-identity = final.callPackage ./nix/smoke-text-identity.nix {
+          inherit (final) sleepwalker-bench-validate sleepwalker-fw-uart
+            sleepwalker-adb-logcat sleepwalker-hid-observe
+            sleepwalker-adb-connect sleepwalker-adb-arm
+            sleepwalker-adb-type-text-encoded sleepwalker-adb-release-all
+            sleepwalker-adb-kill sleepwalker-esp-reset
+            sleepwalker-observer-prepare sleepwalker-text-sink-start
+            sleepwalker-text-sink-read sleepwalker-text-sink-ctl;
         };
         sleepwalker-smoke-mouse = final.callPackage ./nix/smoke-mouse.nix {
           inherit (final) sleepwalker-bench-validate sleepwalker-fw-uart
@@ -248,12 +266,18 @@
             sleepwalker-adb-mouse-scroll = pkgs.sleepwalker-adb-mouse-scroll;
             sleepwalker-adb-mouse-release = pkgs.sleepwalker-adb-mouse-release;
             sleepwalker-adb-type-text = pkgs.sleepwalker-adb-type-text;
+            sleepwalker-adb-type-text-encoded = pkgs.sleepwalker-adb-type-text-encoded;
             sleepwalker-hid-observe = pkgs.sleepwalker-hid-observe;
+            sleepwalker-text-sink-start = pkgs.sleepwalker-text-sink-start;
+            sleepwalker-text-sink-ctl = pkgs.sleepwalker-text-sink-ctl;
+            sleepwalker-text-sink-read = pkgs.sleepwalker-text-sink-read;
+            sleepwalker-observer-prepare = pkgs.sleepwalker-observer-prepare;
             sleepwalker-human-gate = pkgs.sleepwalker-human-gate;
             sleepwalker-esp-reset = pkgs.sleepwalker-esp-reset;
             sleepwalker-artifacts = pkgs.sleepwalker-artifacts;
             sleepwalker-smoke-keyboard = pkgs.sleepwalker-smoke-keyboard;
             sleepwalker-smoke-text = pkgs.sleepwalker-smoke-text;
+            sleepwalker-smoke-text-identity = pkgs.sleepwalker-smoke-text-identity;
             sleepwalker-smoke-mouse = pkgs.smoke-mouse or pkgs.sleepwalker-smoke-mouse;
             sleepwalker-smoke-composite = pkgs.sleepwalker-smoke-composite;
             # Bootable observer ISO (task 5.2). Built via nixosSystem.

@@ -2,6 +2,9 @@
 # identity, role classification, helper version/path, and timestamps.
 # Supports composite keyboard+mouse discovery by capability probing
 # and exclusive input grab for active smoke tests.
+# sleepwalker-text-sink: raw-mode Linux console text capture for HIL identity tests.
+#
+# Both written in C for minimal runtime deps on the sacrificial host.
 #
 # Written in C for minimal runtime deps on the sacrificial host. Reads
 # one or more /dev/input/by-id/sleepwalker-hid-* paths (or path args)
@@ -14,9 +17,12 @@
 #   {"ts_ms":1234,"device":"...","type":"EV_KEY","code":"KEY_SPACE",
 #    "value":1,"type_code":1,"code_code":57}
 #
-# NOTE: The binary's ELF interpreter is patched post-build to use the
-# system's glibc (pkgs.glibc) rather than stdenv.cc's glibc, which may
-# differ. This ensures the binary runs on the observer ISO's glibc.
+# sleepwalker-text-sink usage:
+#   sleepwalker-text-sink <artifact-file>
+#
+# Control via SSH signals:
+#   SIGUSR1: reset the capture buffer
+#   SIGUSR2: stop and flush to artifact file
 { lib, stdenv, linuxHeaders, patchelf, glibc }:
 stdenv.mkDerivation {
   pname = "sleepwalker-hid-observer";
@@ -61,13 +67,16 @@ stdenv.mkDerivation {
   # Patch the ELF interpreter to use the system glibc (not stdenv's).
   # stdenv.cc may link against a different glibc than pkgs.glibc; this
   # ensures the binary's interpreter matches what the ISO provides.
+  # Apply to both binaries.
   postInstall = ''
     patchelf --set-interpreter ${glibc}/lib/ld-linux-x86-64.so.2 \
       $out/bin/sleepwalker-hid-observer
+    patchelf --set-interpreter ${glibc}/lib/ld-linux-x86-64.so.2 \
+      $out/bin/sleepwalker-text-sink
   '';
 
   meta = with lib; {
-    description = "JSONL evdev observer for sleepwalker HIL";
+    description = "HIL observer tools for sleepwalker: JSONL evdev observer and raw-mode text sink";
     mainProgram = "sleepwalker-hid-observer";
     platforms = platforms.linux;
     license = licenses.mit;

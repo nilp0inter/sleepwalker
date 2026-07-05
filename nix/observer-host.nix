@@ -101,8 +101,13 @@
   # Use gzip level 1 instead of the default xz to minimize ISO build time.
   isoImage.squashfsCompression = "gzip -Xcompression-level 1";
 
-  # ---- HID observer helper ----
-  environment.systemPackages = [ (pkgs.callPackage ./observer-helper.nix { inherit (pkgs) patchelf glibc; }) pkgs.networkmanager pkgs.networkmanagerapplet ];
+  # ---- HID observer helper and text sink ----
+  environment.systemPackages = [
+    (pkgs.callPackage ./observer-helper.nix { inherit (pkgs) patchelf glibc; })
+    pkgs.networkmanager
+    pkgs.networkmanagerapplet
+    pkgs.kbd  # Console keymap tools (loadkeys, etc.) for identity test preparation
+  ];
 
   # The helper is invoked over SSH by sleepwalker-hid-observe; no daemon.
 

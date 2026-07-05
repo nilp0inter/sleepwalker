@@ -16,6 +16,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Base64
 import android.os.Handler
 import android.os.Looper
 import io.sleepwalker.app.ble.SleepwalkerBleService
@@ -77,9 +78,23 @@ class AdbCommandReceiver : BroadcastReceiver() {
         const val EXTRA_DY = "dy"
         const val EXTRA_AMOUNT = "amount"
         const val EXTRA_TEXT = "text"
+        const val EXTRA_TEXT_ENCODED = "text_encoded"
         private const val CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb"
-
         // All BLE session state is delegated to SleepwalkerBleService.
+
+        /**
+         * Decode a base64url-encoded UTF-8 string.
+         * @return Decoded string or null if decoding fails.
+         */
+        private fun decodeBase64Url(encoded: String?): String? {
+            if (encoded == null) return null
+            return try {
+                val bytes = Base64.decode(encoded, Base64.URL_SAFE)
+                String(bytes, Charsets.UTF_8)
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+        }
     }
 
     private var currentContext: Context? = null
@@ -96,8 +111,9 @@ class AdbCommandReceiver : BroadcastReceiver() {
         val dy = intent.getIntExtra(EXTRA_DY, 0)
         val amount = intent.getIntExtra(EXTRA_AMOUNT, 0)
         val text = intent.getStringExtra(EXTRA_TEXT)
+        val textEncoded = intent.getStringExtra(EXTRA_TEXT_ENCODED)
         SwLog.adb("intake", seq, mapOf("cmd" to cmd, "key" to key,
-            "dx" to dx, "dy" to dy, "amount" to amount, "text" to text))
+            "dx" to dx, "dy" to dy, "amount" to amount, "text" to text, "text_encoded" to textEncoded))
 
         currentContext = context
 
@@ -105,7 +121,7 @@ class AdbCommandReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             try {
-                handleCommand(cmd, key, text, seq, dx, dy, amount)
+                handleCommand(cmd, key, text, textEncoded, seq, dx, dy, amount)
             } catch (e: Exception) {
                 SwLog.failure("exception", seq, mapOf("error" to (e.message ?: "unknown")))
             } finally {
@@ -114,9 +130,9 @@ class AdbCommandReceiver : BroadcastReceiver() {
         }.start()
     }
 
-    private fun handleCommand(cmd: String, key: String?, text: String?, seq: Int,
+    private fun handleCommand(cmd: String, key: String?, text: String?, textEncoded: String?, seq: Int,
                               dx: Int, dy: Int, amount: Int) {
-        SwLog.ble("command", seq, mapOf("cmd" to cmd, "key" to key, "text" to text))
+        SwLog.ble("command", seq, mapOf("cmd" to cmd, "key" to key, "text" to text, "text_encoded" to textEncoded))
         when (cmd) {
             "connect" -> currentContext?.let { SleepwalkerBleService.startScan(it) }
             "status" -> SwLog.ble("status", fields = mapOf(
@@ -136,12 +152,36 @@ class AdbCommandReceiver : BroadcastReceiver() {
                 SleepwalkerBleService.sendOp(SleepwalkerBleService.hid.keyTap(usage, seqOrNext(seq)), seq)
             }
             "type-text" -> {
+                // Decode encoded text if present, otherwise use plain text
+                val decodedText = when {
+                    textEncoded != null -> {
+                        val decoded = decodeBase64Url(textEncoded)
+                        if (decoded == null) {
+                            SwLog.failure("decode_failed", seq, mapOf(
+                                "reason" to "invalid_base64url",
+                                "encoded" to textEncoded.take(100)))
+                            return
+                        }
+                        SwLog.frame("decoded_text", seq, mapOf(
+                            "encoded_length" to textEncoded.length,
+                            "decoded_length" to decoded.length,
+                            "encoded_preview" to textEncoded.take(50),
+                            "decoded_preview" to decoded.take(50)))
+                        decoded
+                    }
+                    text != null -> text
+                    else -> ""
+                }
+
                 val planner = TextPlanner(hid = SleepwalkerBleService.hid)
-                val result = planner.plan(text ?: "", HostProfile.LINUX_US)
+                val result = planner.plan(decodedText, HostProfile.LINUX_US)
                 if (result.ok) {
                     val ops = result.plan!!
                     val compiled = TapScriptCompiler.compile(ops, SleepwalkerBleService.hid)
-                    SwLog.frame("type_text", seq, mapOf("ops" to compiled.size, "text" to text))
+                    SwLog.frame("type_text", seq, mapOf(
+                        "ops" to compiled.size,
+                        "text_length" to decodedText.length,
+                        "text_preview" to decodedText.take(100)))
                     compiled.forEach {
                         SleepwalkerBleService.sendOp(it, it.seqId)
                         Thread.sleep(500)

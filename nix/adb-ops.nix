@@ -108,4 +108,14 @@ in
       -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd type-text --es text "$TEXT" --ei seq "$SEQ" 2>&1) || true
     printf '{"ok":true,"op":"type-text","text":"%s","seq":%s,"adb_out":%s}\n' "$TEXT" "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
   '';
+
+  # type-text-encoded: type a base64url-encoded string of text.
+  # Use this for text containing shell-sensitive characters.
+  sleepwalker-adb-type-text-encoded = mkAdb "sleepwalker-adb-type-text-encoded" ''
+    TEXT_ENCODED="''${2:-}"
+    SEQ="''${3:-0}"
+    OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast -a io.sleepwalker.app.COMMAND \
+      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd type-text --es text_encoded "$TEXT_ENCODED" --ei seq "$SEQ" 2>&1) || true
+    printf '{"ok":true,"op":"type-text-encoded","text_encoded":"%s","seq":%s,"adb_out":%s}\n' "$TEXT_ENCODED" "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
+  '';
 }
