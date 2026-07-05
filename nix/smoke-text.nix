@@ -123,15 +123,40 @@ PYEOF
 
   sleepwalker-adb-type-text "$ADB_SERIAL" "aA1" 2 2>&1 | tee "$RUN_DIR/adb_type_direct.log" || true
 
-  # Poll for direct text evidence
+  # Poll for direct text evidence using precise sequence and timing verification
   EVIDENCE_TIMEOUT=15
   DIRECT_OK=false
   ELAPSED=0
   while [ "$ELAPSED" -lt "$EVIDENCE_TIMEOUT" ]; do
     if [ -f "$RUN_DIR/hid_observer_direct.jsonl" ]; then
-      if grep -q '"code":"KEY_A","value":1' "$RUN_DIR/hid_observer_direct.jsonl" 2>/dev/null && \
-         grep -q '"code":"KEY_LEFTSHIFT","value":1' "$RUN_DIR/hid_observer_direct.jsonl" 2>/dev/null && \
-         grep -q '"code":"KEY_1","value":1' "$RUN_DIR/hid_observer_direct.jsonl" 2>/dev/null; then
+      if python3 - "$RUN_DIR/hid_observer_direct.jsonl" 250 <<'PYEOF'
+import sys, json, os
+path, max_dur = sys.argv[1], int(sys.argv[2])
+events = []
+if not os.path.exists(path):
+    sys.exit(1)
+with open(path) as f:
+    for line in f:
+        try:
+            ev = json.loads(line)
+            if ev.get("type") == "EV_KEY" and ev.get("code") in ("KEY_A", "KEY_LEFTSHIFT", "KEY_1"):
+                events.append(ev)
+        except Exception:
+            pass
+expected = [
+    ("KEY_A", 1), ("KEY_A", 0),
+    ("KEY_LEFTSHIFT", 1), ("KEY_A", 1), ("KEY_LEFTSHIFT", 0), ("KEY_A", 0),
+    ("KEY_1", 1), ("KEY_1", 0)
+]
+for i in range(len(events) - len(expected) + 1):
+    window = events[i : i + len(expected)]
+    if all(w.get("code") == e[0] and w.get("value") == e[1] for w, e in zip(window, expected)):
+        duration = window[-1].get("ts_ms") - window[0].get("ts_ms")
+        if duration <= max_dur:
+            sys.exit(0)
+sys.exit(1)
+PYEOF
+      then
         DIRECT_OK=true
         break
       fi
@@ -139,7 +164,6 @@ PYEOF
     sleep 1
     ELAPSED=$((ELAPSED + 1))
   done
-
   kill $OBS1_PID 2>/dev/null || true
   wait $OBS1_PID 2>/dev/null || true
   kill_remote_observer
@@ -168,14 +192,39 @@ PYEOF
   # Type text using Android input
   ${adb} -s "$ADB_SERIAL" shell input text "aA1" 2>&1 | tee "$RUN_DIR/input_text.log" || true
 
-  # Poll for UI text evidence
+  # Poll for UI text evidence using precise sequence and timing verification
   ELAPSED=0
   UI_OK=false
   while [ "$ELAPSED" -lt "$EVIDENCE_TIMEOUT" ]; do
     if [ -f "$RUN_DIR/hid_observer_ui.jsonl" ]; then
-      if grep -q '"code":"KEY_A","value":1' "$RUN_DIR/hid_observer_ui.jsonl" 2>/dev/null && \
-         grep -q '"code":"KEY_LEFTSHIFT","value":1' "$RUN_DIR/hid_observer_ui.jsonl" 2>/dev/null && \
-         grep -q '"code":"KEY_1","value":1' "$RUN_DIR/hid_observer_ui.jsonl" 2>/dev/null; then
+      if python3 - "$RUN_DIR/hid_observer_ui.jsonl" 5000 <<'PYEOF'
+import sys, json, os
+path, max_dur = sys.argv[1], int(sys.argv[2])
+events = []
+if not os.path.exists(path):
+    sys.exit(1)
+with open(path) as f:
+    for line in f:
+        try:
+            ev = json.loads(line)
+            if ev.get("type") == "EV_KEY" and ev.get("code") in ("KEY_A", "KEY_LEFTSHIFT", "KEY_1"):
+                events.append(ev)
+        except Exception:
+            pass
+expected = [
+    ("KEY_A", 1), ("KEY_A", 0),
+    ("KEY_LEFTSHIFT", 1), ("KEY_A", 1), ("KEY_LEFTSHIFT", 0), ("KEY_A", 0),
+    ("KEY_1", 1), ("KEY_1", 0)
+]
+for i in range(len(events) - len(expected) + 1):
+    window = events[i : i + len(expected)]
+    if all(w.get("code") == e[0] and w.get("value") == e[1] for w, e in zip(window, expected)):
+        duration = window[-1].get("ts_ms") - window[0].get("ts_ms")
+        if duration <= max_dur:
+            sys.exit(0)
+sys.exit(1)
+PYEOF
+      then
         UI_OK=true
         break
       fi
@@ -183,7 +232,6 @@ PYEOF
     sleep 1
     ELAPSED=$((ELAPSED + 1))
   done
-
   kill $OBS2_PID 2>/dev/null || true
   wait $OBS2_PID 2>/dev/null || true
 

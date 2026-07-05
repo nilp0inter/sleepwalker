@@ -78,6 +78,12 @@ interface LowLevelHid {
     /** Release a keyboard key (or all keys if usage is NONE). */
     fun keyUp(usage: HidUsage, seqId: Int = nextSeqId()): LowLevelOp
 
+    /** Compile and send a batched keyboard tap script. */
+    fun keyboardTapScript(
+        taps: List<Pair<Byte, Byte>>,
+        seqId: Int = nextSeqId(),
+    ): LowLevelOp
+
     /**
      * Emit a raw relative mouse report. Per-axis deltas must fit the
      * signed 8-bit report range; use [MouseOps] for movement that may

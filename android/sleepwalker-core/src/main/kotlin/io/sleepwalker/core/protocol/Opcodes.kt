@@ -32,7 +32,7 @@ object Opcodes {
     const val KEY_TAP: Int = 0x0011
     const val KEY_DOWN: Int = 0x0012
     const val KEY_UP: Int = 0x0013
-
+    const val KEYBOARD_TAP_SCRIPT: Int = 0x0014
     // ---- Relative mouse HID: 0x0100..0x01FF ----
     /** Raw relative mouse report. Payload: buttons,u8 dx,i8 dy,i8 wheel,i8 pan,i8. */
     const val MOUSE_REL_REPORT: Int = 0x0100
@@ -48,7 +48,7 @@ object Opcodes {
     /** All currently-implemented opcodes accepted by firmware dispatch. */
     val ALL: Set<Int> = setOf(
         ARM, DISARM, KILL, RELEASE_ALL,
-        KEY_TAP, KEY_DOWN, KEY_UP,
+        KEY_TAP, KEY_DOWN, KEY_UP, KEYBOARD_TAP_SCRIPT,
         MOUSE_REL_REPORT,
     )
 

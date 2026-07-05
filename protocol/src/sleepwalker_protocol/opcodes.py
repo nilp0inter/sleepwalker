@@ -63,6 +63,9 @@ OPCODE_KEY_DOWN: int = 0x0012
 #: Payload: one byte USB HID usage id, or empty for release-all.
 OPCODE_KEY_UP: int = 0x0013
 
+#: Inject a keyboard tap script payload.
+OPCODE_KEYBOARD_TAP_SCRIPT: int = 0x0014
+
 # ---- Relative mouse HID namespace: 0x0100..0x01FF ----
 #: Raw relative mouse report. Payload is exactly five bytes:
 #: buttons:u8, dx:i8, dy:i8, wheel:i8, pan:i8.
@@ -136,6 +139,7 @@ ALL_OPCODES: frozenset[int] = frozenset({
     OPCODE_KEY_TAP,
     OPCODE_KEY_DOWN,
     OPCODE_KEY_UP,
+    OPCODE_KEYBOARD_TAP_SCRIPT,
     OPCODE_MOUSE_REL_REPORT,
 })
 
@@ -154,6 +158,7 @@ __all__ = [
     "OPCODE_KEY_TAP",
     "OPCODE_KEY_DOWN",
     "OPCODE_KEY_UP",
+    "OPCODE_KEYBOARD_TAP_SCRIPT",
     "OPCODE_MOUSE_REL_REPORT",
     "OPCODE_ABS_POINTER_BASE",
     "OPCODE_SERIAL_BASE",

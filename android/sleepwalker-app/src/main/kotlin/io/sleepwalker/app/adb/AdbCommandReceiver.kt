@@ -24,6 +24,7 @@ import io.sleepwalker.core.hid.LowLevelHid
 import io.sleepwalker.core.hid.LowLevelOp
 import io.sleepwalker.core.keymap.HostProfile
 import io.sleepwalker.core.text.TextPlanner
+import io.sleepwalker.core.text.TapScriptCompiler
 import io.sleepwalker.core.hid.LowLevelHidImpl
 import io.sleepwalker.core.hid.MouseOps
 import io.sleepwalker.core.hid.SessionStatusParser
@@ -139,10 +140,11 @@ class AdbCommandReceiver : BroadcastReceiver() {
                 val result = planner.plan(text ?: "", HostProfile.LINUX_US)
                 if (result.ok) {
                     val ops = result.plan!!
-                    SwLog.frame("type_text", seq, mapOf("ops" to ops.size, "text" to text))
-                    ops.forEach {
+                    val compiled = TapScriptCompiler.compile(ops, SleepwalkerBleService.hid)
+                    SwLog.frame("type_text", seq, mapOf("ops" to compiled.size, "text" to text))
+                    compiled.forEach {
                         SleepwalkerBleService.sendOp(it, it.seqId)
-                        Thread.sleep(100)
+                        Thread.sleep(500)
                     }
                 } else {
                     val err = result.failure

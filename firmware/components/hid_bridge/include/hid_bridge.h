@@ -19,7 +19,7 @@ extern "C" {
 // Fixed-size queue item. Payload is bounded by the protocol max payload,
 // but keyboard/mouse commands are tiny (1 byte usage). We keep a small
 // inline buffer to avoid per-item allocation.
-#define SW_HID_BRIDGE_PAYLOAD_MAX 16u
+#define SW_HID_BRIDGE_PAYLOAD_MAX 240u
 #define SW_HID_BRIDGE_QUEUE_LEN   16u
 
 typedef struct {
@@ -44,6 +44,9 @@ bool sw_hid_bridge_dequeue(sw_hid_bridge_item_t *out, uint32_t timeout_ms);
 
 // Current number of items in the queue (diagnostics).
 uint32_t sw_hid_bridge_pending(void);
+
+// Peek at the next item in the queue without removing it. Returns true on success.
+bool sw_hid_bridge_peek(sw_hid_bridge_item_t *out);
 
 #ifdef __cplusplus
 }

@@ -111,6 +111,20 @@ bool sw_usb_hid_keyboard_release(void)
     return tud_hid_report(SW_HID_REPORT_ID_KEYBOARD, report, sizeof(report));
 }
 
+bool sw_usb_hid_keyboard_report(uint8_t modifiers, uint8_t usb_usage)
+{
+    if (!sw_usb_hid_ready()) {
+        return false;
+    }
+    s_active_modifiers = modifiers;
+    uint8_t report[SW_HID_KBD_REPORT_LEN];
+    memset(report, 0, sizeof(report));
+    report[0] = modifiers;
+    if (usb_usage != 0 && !(usb_usage >= 0xE0 && usb_usage <= 0xE7)) {
+        report[2] = usb_usage;
+    }
+    return tud_hid_report(SW_HID_REPORT_ID_KEYBOARD, report, sizeof(report));
+}
 bool sw_usb_hid_mouse_rel_report(uint8_t buttons, int8_t dx, int8_t dy,
                                  int8_t wheel, int8_t pan)
 {

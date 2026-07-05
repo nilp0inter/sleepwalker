@@ -50,6 +50,16 @@ class LowLevelHidImpl : LowLevelHid {
         op(seqId, io.sleepwalker.core.protocol.Opcodes.KEY_UP,
             byteArrayOf(usage.usbUsage.toByte()))
 
+    override fun keyboardTapScript(taps: List<Pair<Byte, Byte>>, seqId: Int): LowLevelOp =
+        op(seqId, io.sleepwalker.core.protocol.Opcodes.KEYBOARD_TAP_SCRIPT,
+            ByteArray(1 + taps.size * 2).apply {
+                this[0] = taps.size.toByte()
+                taps.forEachIndexed { i, tap ->
+                    this[1 + i * 2] = tap.first
+                    this[2 + i * 2] = tap.second
+                }
+            })
+
     override fun mouseRelReport(
         buttons: Int, dx: Int, dy: Int,
         wheel: Int, pan: Int, seqId: Int,

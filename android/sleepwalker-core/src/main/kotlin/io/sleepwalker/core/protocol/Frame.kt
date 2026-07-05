@@ -82,6 +82,19 @@ object Frame {
         return out
     }
 
+    fun keyboardTapScript(
+        seqId: Int,
+        taps: List<Pair<Byte, Byte>>
+    ): ByteArray {
+        val payload = ByteArray(1 + taps.size * 2)
+        payload[0] = taps.size.toByte()
+        taps.forEachIndexed { i, tap ->
+            payload[1 + i * 2] = tap.first
+            payload[2 + i * 2] = tap.second
+        }
+        return encode(seqId, Opcodes.KEYBOARD_TAP_SCRIPT, payload)
+    }
+
     fun decode(data: ByteArray): Decoded {
         if (data.size < HEADER_SIZE + CRC_SIZE) {
             throw DecodeError.Malformed("frame too short: ${data.size}")

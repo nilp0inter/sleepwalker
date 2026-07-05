@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
 import io.sleepwalker.app.ble.SleepwalkerBleService
 import io.sleepwalker.core.keymap.HostProfile
 import io.sleepwalker.core.text.TextPlanner
+import io.sleepwalker.core.text.TapScriptCompiler
 import io.sleepwalker.core.text.TextRenderingFailure
 
 /**
@@ -166,9 +167,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (result.ok) {
                     val ops = result.plan!!
-                    ops.forEach { op ->
+                    val compiled = TapScriptCompiler.compile(ops, SleepwalkerBleService.hid)
+                    compiled.forEach { op ->
                         SleepwalkerBleService.sendOp(op, op.seqId)
-                        Thread.sleep(100)
+                        Thread.sleep(500)
                     }
                 }
             }

@@ -108,6 +108,11 @@ class TextPlannerTest {
                 calls.add("keyUp:${usage.name}")
                 return io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEY_UP, byteArrayOf(usage.usbUsage.toByte()), seqId)
             }
+            override fun keyboardTapScript(taps: List<Pair<Byte, Byte>>, seqId: Int): io.sleepwalker.core.hid.LowLevelOp {
+                calls.add("keyboardTapScript:${taps.size}")
+                return io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEYBOARD_TAP_SCRIPT, byteArrayOf(), seqId)
+            }
+
             override fun mouseRelReport(buttons: Int, dx: Int, dy: Int, wheel: Int, pan: Int, seqId: Int) =
                 io.sleepwalker.core.hid.LowLevelOp(Opcodes.MOUSE_REL_REPORT, byteArrayOf(), seqId)
         }

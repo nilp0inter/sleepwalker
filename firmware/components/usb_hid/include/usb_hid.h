@@ -31,6 +31,8 @@ bool sw_usb_hid_keyboard_press(uint8_t usb_usage);
 // Emit a keyboard release report (no keys pressed). Returns true on success.
 bool sw_usb_hid_keyboard_release(void);
 
+// Emit a custom keyboard report with specified modifiers and usage. Returns true on success.
+bool sw_usb_hid_keyboard_report(uint8_t modifiers, uint8_t usb_usage);
 // Emit a relative mouse report. `buttons` is a button mask (bit 0 = left,
 // bit 1 = right, bit 2 = middle). dx/dy/wheel/pan are signed 8-bit
 // relative deltas. Returns true on success.

@@ -131,6 +131,7 @@ bool sw_proto_is_known_opcode(uint16_t opcode)
     case SW_OPCODE_KEY_TAP:
     case SW_OPCODE_KEY_DOWN:
     case SW_OPCODE_KEY_UP:
+    case SW_OPCODE_KEYBOARD_TAP_SCRIPT:
     case SW_OPCODE_MOUSE_REL_REPORT:
         return true;
     default:

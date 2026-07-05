@@ -184,6 +184,18 @@ static int sw_rx_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         return 0;
     }
 
+    // 2c. KEYBOARD_TAP_SCRIPT payload length validation at RX time.
+    if (frame.opcode == SW_OPCODE_KEYBOARD_TAP_SCRIPT &&
+        (frame.payload_len < 1 || frame.payload_len != 1 + frame.payload[0] * 2)) {
+        char fj[80];
+        snprintf(fj, sizeof(fj),
+                 "\"opcode\":\"0x%04X\",\"len\":%u,\"status\":\"malformed\"",
+                 frame.opcode, (unsigned)frame.payload_len);
+        sw_log_ble("rx", seq, fj);
+        sw_ble_uart_notify_status(seq, SW_STATUS_MALFORMED, NULL, 0);
+        return 0;
+    }
+
     // 3. Received OK.
     char rxj[64];
     snprintf(rxj, sizeof(rxj), "\"opcode\":\"0x%04X\",\"len\":%u",

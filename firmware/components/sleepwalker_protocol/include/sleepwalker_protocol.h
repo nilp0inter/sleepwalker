@@ -54,6 +54,7 @@ extern "C" {
 #define SW_OPCODE_KEY_TAP              0x0011u
 #define SW_OPCODE_KEY_DOWN             0x0012u
 #define SW_OPCODE_KEY_UP               0x0013u
+#define SW_OPCODE_KEYBOARD_TAP_SCRIPT  0x0014u
 
 // ---- Relative mouse HID namespace: 0x0100..0x01FF ----
 // Raw relative mouse report. Payload is exactly five bytes:

@@ -51,3 +51,11 @@ uint32_t sw_hid_bridge_pending(void)
     }
     return (uint32_t)uxQueueMessagesWaiting(s_queue);
 }
+
+bool sw_hid_bridge_peek(sw_hid_bridge_item_t *out)
+{
+    if (s_queue == NULL || out == NULL) {
+        return false;
+    }
+    return xQueuePeek(s_queue, out, 0u) == pdTRUE;
+}
