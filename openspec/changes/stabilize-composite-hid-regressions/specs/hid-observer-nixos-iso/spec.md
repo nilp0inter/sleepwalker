@@ -29,3 +29,16 @@ The observer helper SHALL emit line-oriented structured events for Linux input e
 #### Scenario: Relative movement observed
 - **WHEN** the ESP32-S3 emits relative mouse movement
 - **THEN** the observer helper emits JSONL events for `EV_REL REL_X` or `EV_REL REL_Y` with the observed relative value
+
+## ADDED Requirements
+
+### Requirement: Device enumeration preflight wait
+The HID observer invocation SHALL wait for all requested device paths to appear on the observer host before opening them, within a bounded timeout, to avoid failing with ENOENT when USB HID enumeration has not yet completed.
+
+#### Scenario: Observer waits for device paths
+- **WHEN** the observer is invoked before the ESP32-S3 has finished USB enumeration
+- **THEN** the observer polls for all device paths to exist before opening them, and proceeds once they appear
+
+#### Scenario: Devices not present after timeout
+- **WHEN** device paths do not appear within the bounded timeout
+- **THEN** the observer reports a structured failure indicating devices were not present after preflight, rather than a silent ENOENT

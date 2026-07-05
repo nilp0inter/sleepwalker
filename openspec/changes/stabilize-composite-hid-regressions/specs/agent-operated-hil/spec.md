@@ -35,3 +35,28 @@ The HIL SHALL start observation with exclusive grab on every matched Sleepwalker
 #### Scenario: All matched nodes grabbed
 - **WHEN** composite smoke starts observation
 - **THEN** keyboard-capable and mouse-capable Sleepwalker event devices are grabbed for the active observation window
+
+### Requirement: ESP32-S3 reset before smoke captures
+The HIL SHALL reset the ESP32-S3 into a known-good state via UART RTS pulse before starting smoke captures, so that stale BLE/firmware state from a previous smoke does not cause command failures.
+
+#### Scenario: Board reset before smoke
+- **WHEN** a smoke operation begins on a commissioned bench
+- **THEN** the ESP32-S3 is reset via RTS (EN) with DTR deasserted (GPIO0 high = normal boot) before UART capture and BLE commands start
+
+### Requirement: BLE session readiness wait before arming
+The HIL SHALL wait for BLE GATT session readiness before sending arm or inject commands, polling Android diagnostics for subscribe or services-discovered events within a bounded timeout.
+
+#### Scenario: Commands wait for BLE connection
+- **WHEN** a smoke operation sends a connect command
+- **THEN** the operation waits for BLE subscribe or services_discovered evidence before proceeding to arm
+
+#### Scenario: BLE not ready produces clear failure
+- **WHEN** BLE does not reach subscribe or services_discovered within the bounded timeout
+- **THEN** the smoke writes a failing summary identifying the connection layer as the failure point and does not send arm or inject commands
+
+### Requirement: UART capture without board reset
+The HIL UART capture SHALL open the serial port with DTR and RTS deasserted so that opening the port does not reset the ESP32-S3 and cause USB HID re-enumeration during observation.
+
+#### Scenario: Serial open preserves HID enumeration
+- **WHEN** the UART capture opens the ESP32-S3 serial port
+- **THEN** DTR and RTS remain deasserted and the observer host's USB HID devices stay enumerated throughout the capture window
