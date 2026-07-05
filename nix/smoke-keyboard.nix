@@ -65,7 +65,10 @@ PYEOF
   sleepwalker-adb-logcat "$RUN_DIR/android_logcat.jsonl" "$ADB_SERIAL" 60 &
   LC_PID=$!
   sleepwalker-hid-observe "$SSH_TARGET" "$RUN_DIR/hid_observer.jsonl" 60 \
-    "$SSH_IDENTITY" "$SSH_KNOWN_HOSTS" &
+    "$SSH_IDENTITY" "$SSH_KNOWN_HOSTS" \
+    /dev/input/by-id/sleepwalker-hid-keyboard \
+    /dev/input/by-id/sleepwalker-hid-mouse \
+    --grab &
   HID_PID=$!
 
   # Cleanup function: kill all background captures.
@@ -86,7 +89,10 @@ PYEOF
   sleepwalker-adb-inject-key "$ADB_SERIAL" USB_KEY_SPACE 2 2>&1 | tee "$RUN_DIR/adb_inject.log" || true
 
   # 4. Poll HID observer output for KEY_SPACE down+up evidence.
-  #    Expected: "KEY_SPACE" with value:1 AND value:0 in hid_observer.jsonl.
+  #    Match on symbolic evdev names emitted by observer helper >=0.2.0
+  #    (the composite-capable build). The helper probes capabilities and
+  #    classifies nodes, so observing both keyboard and mouse symlinks is
+  #    safe even if the composite descriptor exposes one combined node.
   EVIDENCE_TIMEOUT=30
   EVIDENCE_FOUND=false
   ELAPSED=0
@@ -140,6 +146,21 @@ key_space_down = any(
 key_space_up = any(
     e.get("code") == "KEY_SPACE" and e.get("value") == 0 for e in hid_events
 )
+# Observer device identity and helper version from device_found events.
+device_found = [e for e in hid_events if e.get("event") == "device_found"]
+observer_devices = [
+    {"device": e.get("device"), "name": e.get("name"),
+     "roles": e.get("roles", []), "grab": e.get("grab")}
+    for e in device_found
+]
+helper_version = next(
+    (e.get("helper_version") for e in device_found if e.get("helper_version")),
+    None,
+)
+helper_path = next(
+    (e.get("helper_path") for e in device_found if e.get("helper_path")),
+    None,
+)
 summary = {
     "ok": status == "pass",
     "status": status,
@@ -150,6 +171,11 @@ summary = {
         "key_space_down": key_space_down,
         "key_space_up": key_space_up,
         "correlated": key_space_down and key_space_up,
+    },
+    "observer": {
+        "helper_version": helper_version,
+        "helper_path": helper_path,
+        "devices": observer_devices,
     },
     "artifacts": {
         "bench": "bench.toml",

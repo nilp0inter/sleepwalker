@@ -155,6 +155,14 @@
             sleepwalker-adb-mouse-click sleepwalker-adb-mouse-move
             sleepwalker-adb-mouse-release sleepwalker-adb-kill;
         };
+        sleepwalker-smoke-composite = final.callPackage ./nix/smoke-composite.nix {
+          inherit (final) sleepwalker-bench-validate sleepwalker-fw-uart
+            sleepwalker-adb-logcat sleepwalker-hid-observe
+            sleepwalker-adb-connect sleepwalker-adb-arm
+            sleepwalker-adb-inject-key sleepwalker-adb-release-all
+            sleepwalker-adb-mouse-click sleepwalker-adb-mouse-move
+            sleepwalker-adb-mouse-release sleepwalker-adb-kill;
+        };
       };
 
       perSystem = system:
@@ -216,8 +224,6 @@
             sleepwalker-adb-arm = pkgs.sleepwalker-adb-arm;
             sleepwalker-adb-inject-key = pkgs.sleepwalker-adb-inject-key;
             sleepwalker-adb-release-all = pkgs.sleepwalker-adb-release-all;
-            sleepwalker-adb-kill = pkgs.sleepwalker-adb-kill;
-            sleepwalker-adb-mouse-click = pkgs.sleepwalker-adb-mouse-click;
             sleepwalker-adb-mouse-move = pkgs.sleepwalker-adb-mouse-move;
             sleepwalker-adb-mouse-scroll = pkgs.sleepwalker-adb-mouse-scroll;
             sleepwalker-adb-mouse-release = pkgs.sleepwalker-adb-mouse-release;
@@ -226,6 +232,7 @@
             sleepwalker-artifacts = pkgs.sleepwalker-artifacts;
             sleepwalker-smoke-keyboard = pkgs.sleepwalker-smoke-keyboard;
             sleepwalker-smoke-mouse = pkgs.sleepwalker-smoke-mouse;
+            sleepwalker-smoke-composite = pkgs.sleepwalker-smoke-composite;
             # Bootable observer ISO (task 5.2). Built via nixosSystem.
             sleepwalker-hid-observer-iso = observerIsoSystem.config.system.build.isoImage;
             default = pkgs.sleepwalker-protocol-check;
@@ -337,6 +344,11 @@
             sleepwalker-smoke-mouse = {
               type = "app";
               program = "${pkgs.sleepwalker-smoke-mouse}/bin/sleepwalker-smoke-mouse";
+            };
+            # Composed composite keyboard+mouse smoke scenario.
+            sleepwalker-smoke-composite = {
+              type = "app";
+              program = "${pkgs.sleepwalker-smoke-composite}/bin/sleepwalker-smoke-composite";
             };
           };
 

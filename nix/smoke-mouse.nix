@@ -58,14 +58,30 @@ PYEOF
   RUN_DIR="$ARTIFACT_DIR/$RUN_ID"
   mkdir -p "$RUN_DIR"
 
-  # Start captures. The HID observer targets the mouse device symlink.
+  # Start captures. The HID observer targets both keyboard and mouse
+  # symlinks so the composite-capable helper can classify each node by
+  # evdev capabilities; --grab acquires an exclusive grab on every
+  # matched node used during the smoke window.
   sleepwalker-fw-uart "$ESP_UART" "$RUN_DIR/esp_uart.jsonl" 115200 60 &
   FW_PID=$!
   sleepwalker-adb-logcat "$RUN_DIR/android_logcat.jsonl" "$ADB_SERIAL" 60 &
   LC_PID=$!
   sleepwalker-hid-observe "$SSH_TARGET" "$RUN_DIR/hid_observer.jsonl" 60 \
-    "$SSH_IDENTITY" "$SSH_KNOWN_HOSTS" /dev/input/by-id/sleepwalker-hid-mouse &
+    "$SSH_IDENTITY" "$SSH_KNOWN_HOSTS" \
+    /dev/input/by-id/sleepwalker-hid-keyboard \
+    /dev/input/by-id/sleepwalker-hid-mouse \
+    --grab &
   HID_PID=$!
+
+  # Cleanup function: kill all background captures.
+  kill_captures() {
+    kill $FW_PID 2>/dev/null || true
+    kill $LC_PID 2>/dev/null || true
+    kill $HID_PID 2>/dev/null || true
+    wait $FW_PID 2>/dev/null || true
+    wait $LC_PID 2>/dev/null || true
+    wait $HID_PID 2>/dev/null || true
+  }
 
   # Drive the mouse smoke scenario through the public library command path.
   sleepwalker-adb-connect "$ADB_SERIAL" 2>&1 | tee "$RUN_DIR/adb_connect.log" || true
@@ -81,17 +97,18 @@ PYEOF
   sleepwalker-adb-mouse-release "$ADB_SERIAL" 4 2>&1 | tee "$RUN_DIR/adb_mouse_release.log" || true
 
   # Poll HID observer output for BTN_LEFT down+up and REL evidence.
+  # Prefer symbolic names emitted by observer helper >=0.2.0; fall back
+  # to raw code_code values for observer ISOs that predate the symbolic
+  # decoding so the smoke still produces evidence on a stale binary.
   # BTN_LEFT is evdev code 272 (0x110); REL_X is code 0, REL_Y is code 1.
-  # Match on raw code_code values so the smoke passes against observer
-  # ISOs that predate the BTN_LEFT/REL_X name mapping.
   EVIDENCE_TIMEOUT=30
   EVIDENCE_FOUND=false
   ELAPSED=0
   while [ "$ELAPSED" -lt "$EVIDENCE_TIMEOUT" ]; do
     if [ -f "$RUN_DIR/hid_observer.jsonl" ]; then
-      btn_down=$(grep -c '"type_code":1,"code_code":272,"value":1' "$RUN_DIR/hid_observer.jsonl" 2>/dev/null || echo 0)
-      btn_up=$(grep -c '"type_code":1,"code_code":272,"value":0' "$RUN_DIR/hid_observer.jsonl" 2>/dev/null || echo 0)
-      rel=$(grep -c '"type_code":2' "$RUN_DIR/hid_observer.jsonl" 2>/dev/null || echo 0)
+      btn_down=$(grep -cE '"code":"BTN_LEFT","value":1|"type_code":1,"code_code":272,"value":1' "$RUN_DIR/hid_observer.jsonl" 2>/dev/null || true)
+      btn_up=$(grep -cE '"code":"BTN_LEFT","value":0|"type_code":1,"code_code":272,"value":0' "$RUN_DIR/hid_observer.jsonl" 2>/dev/null || true)
+      rel=$(grep -cE '"code":"REL_[XY]"|"type_code":2' "$RUN_DIR/hid_observer.jsonl" 2>/dev/null || true)
       if [ "$btn_down" -gt 0 ] && [ "$btn_up" -gt 0 ] && [ "$rel" -gt 0 ]; then
         EVIDENCE_FOUND=true
         break
@@ -137,6 +154,21 @@ rel_x = any(e.get("type") == "EV_REL" and
 rel_y = any(e.get("type") == "EV_REL" and
     (e.get("code") == "REL_Y" or e.get("code_code") == 1) for e in hid_events)
 rel_any = any(e.get("type") == "EV_REL" for e in hid_events)
+# Observer device identity and helper version from device_found events.
+device_found = [e for e in hid_events if e.get("event") == "device_found"]
+observer_devices = [
+    {"device": e.get("device"), "name": e.get("name"),
+     "roles": e.get("roles", []), "grab": e.get("grab")}
+    for e in device_found
+]
+helper_version = next(
+    (e.get("helper_version") for e in device_found if e.get("helper_version")),
+    None,
+)
+helper_path = next(
+    (e.get("helper_path") for e in device_found if e.get("helper_path")),
+    None,
+)
 summary = {
     "ok": status == "pass",
     "status": status,
@@ -150,6 +182,11 @@ summary = {
         "rel_y": rel_y,
         "rel_any": rel_any,
         "correlated": btn_left_down and btn_left_up and rel_any,
+    },
+    "observer": {
+        "helper_version": helper_version,
+        "helper_path": helper_path,
+        "devices": observer_devices,
     },
     "artifacts": {
         "bench": "bench.toml",

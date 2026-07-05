@@ -279,3 +279,5 @@ android/build/
 android/.gradle/
 artifacts/
 sleepwalker-hil/bench.toml
+# Never commit compiled observer helper binary; let Nix build it.
+nix/observer-helper-src/sleepwalker-hid-observer

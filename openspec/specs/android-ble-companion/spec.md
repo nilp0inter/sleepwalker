@@ -1,36 +1,29 @@
 ## ADDED Requirements
 
-### Requirement: ADB command intake surface
-The Android companion app SHALL expose an ADB-friendly command surface for agent-driven operation. Commands SHALL be accepted through explicit package/component targeting and translated into service-owned BLE operations.
+### Requirement: Reference app delegates to library
+The Android reference app SHALL demonstrate and exercise public `sleepwalker-core` library behavior. It SHALL NOT own protocol encoding, keymap rendering, or HID semantic logic that belongs in the reusable library.
 
-#### Scenario: Keyboard command received from ADB
-- **WHEN** the harness host sends an explicit ADB command to inject `USB_KEY_SPACE`
-- **THEN** the Android app records a structured diagnostic event and passes the command to the BLE service path
+#### Scenario: App injects key through library
+- **WHEN** the reference app or ADB command path requests a key injection
+- **THEN** the command is encoded through `sleepwalker-core` library behavior rather than app-local protocol construction
 
-### Requirement: Service-owned BLE connection
-The Android app SHALL use a service-owned BLE connection/session so command execution is not performed directly inside a short-lived broadcast receiver callback.
+### Requirement: ADB command path uses public surfaces
+ADB-driven commands SHALL exercise the same library/session behavior available to normal library consumers.
 
-#### Scenario: Receiver delegates long-running work
-- **WHEN** an ADB broadcast or shell command requests BLE connect, arm, or key injection
-- **THEN** the receiver parses the request quickly and delegates BLE work to the app service
+#### Scenario: ADB mouse command uses library path
+- **WHEN** HIL sends an ADB command for relative mouse movement or button click
+- **THEN** the app delegates to the public library/session path and records structured diagnostics for that command sequence
 
-### Requirement: Core protocol and BLE library
-The `sleepwalker-core` library SHALL own command frame encoding, CRC insertion, symbolic HID usage mapping, BLE UUID constants, negotiated-MTU-aware writes, and status notification parsing.
+### Requirement: Single BLE session ownership
+BLE scan, connect, GATT write, MTU handling, and status notification parsing SHALL be owned by one session/service path rather than duplicated across app entry points.
 
-#### Scenario: Core encodes symbolic key
-- **WHEN** the app service requests injection of `USB_KEY_SPACE`
-- **THEN** `sleepwalker-core` creates a sequenced protocol frame for the canonical USB HID usage
+#### Scenario: Receiver delegates long-running BLE work
+- **WHEN** the ADB receiver receives a command requiring BLE I/O
+- **THEN** it delegates to the service/session owner instead of performing independent scan/connect/write logic
 
-### Requirement: BLE bonding and permission accounting
-The Android companion SHALL account for BLE runtime permissions and bonding state. First-time manual pairing MAY be treated as commissioning, but normal regression commands SHALL detect missing permission or bond state and report structured failures.
+### Requirement: Reference app exposes capability demos
+The reference app SHALL expose demo/debug surfaces for connection, arm/disarm/kill, low-level keyboard, low-level relative mouse, and high-level text planning once supported by the library.
 
-#### Scenario: Missing bond reported
-- **WHEN** a regression command requires a bonded ESP32-S3 but no usable bond exists
-- **THEN** the app reports a structured missing-bond failure instead of silently timing out
-
-### Requirement: Structured Android diagnostics
-The Android companion SHALL emit structured logcat diagnostics for ADB command intake, BLE connection state, frame writes, status notifications, and failures.
-
-#### Scenario: BLE ACK logged
-- **WHEN** the ESP32-S3 notifies a status acknowledgement for a command sequence
-- **THEN** Android logcat contains a structured event with the same sequence identifier and acknowledgement status
+#### Scenario: Mouse demo command available
+- **WHEN** the app is installed for HIL or manual demonstration
+- **THEN** a caller can request a relative mouse click or movement through an explicit command surface
