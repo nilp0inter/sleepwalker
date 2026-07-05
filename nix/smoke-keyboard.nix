@@ -14,12 +14,14 @@
 { lib, writeShellScriptBin, coreutils, python3
 , sleepwalker-bench-validate, sleepwalker-fw-uart, sleepwalker-adb-logcat
 , sleepwalker-hid-observe, sleepwalker-adb-connect, sleepwalker-adb-arm
-, sleepwalker-adb-inject-key, sleepwalker-adb-release-all, sleepwalker-adb-kill }:
+, sleepwalker-adb-inject-key, sleepwalker-adb-release-all, sleepwalker-adb-kill
+, sleepwalker-esp-reset }:
 let
   primPath = lib.makeBinPath [
     sleepwalker-bench-validate sleepwalker-fw-uart sleepwalker-adb-logcat
     sleepwalker-hid-observe sleepwalker-adb-connect sleepwalker-adb-arm
     sleepwalker-adb-inject-key sleepwalker-adb-release-all sleepwalker-adb-kill
+    sleepwalker-esp-reset
   ];
 in
 writeShellScriptBin "sleepwalker-smoke-keyboard" ''
@@ -57,6 +59,9 @@ PYEOF
   RUN_ID="run_$(date +%s)"
   RUN_DIR="$ARTIFACT_DIR/$RUN_ID"
   mkdir -p "$RUN_DIR"
+  # 1.5 Reset the ESP32-S3 via UART RTS pulse for a known-good state.
+  sleepwalker-esp-reset "$ESP_UART" 115200 2>&1 | tee "$RUN_DIR/esp_reset.log" || true
+  sleep 2
 
   # 2. Start captures in the background with generous safety-net timeouts.
   #    These will be killed early once evidence is found (step 4).
@@ -83,7 +88,37 @@ PYEOF
 
   # 3. Drive the scenario.
   sleepwalker-adb-connect "$ADB_SERIAL" 2>&1 | tee "$RUN_DIR/adb_connect.log" || true
-  sleep 2
+  # Wait for BLE connection to establish before arming.
+  BLE_WAIT_TIMEOUT=15
+  BLE_READY=false
+  for i in $(seq 1 "$BLE_WAIT_TIMEOUT"); do
+    if [ -f "$RUN_DIR/android_logcat.jsonl" ] && \
+       grep -q '"event":"subscribe"\|"event":"services_discovered"' "$RUN_DIR/android_logcat.jsonl" 2>/dev/null; then
+      BLE_READY=true
+      break
+    fi
+    sleep 1
+  done
+  if ! $BLE_READY; then
+    kill_captures
+    cp "$BENCH" "$RUN_DIR/bench.toml"
+    python3 - "$RUN_DIR" <<'PYEOF'
+import json, os, sys
+run_dir = sys.argv[1]
+summary = {
+    "ok": False, "status": "fail", "scenario": "keyboard_smoke",
+    "run_dir": run_dir, "failure_layer": "ble_connection",
+    "reason": "BLE did not reach subscribe/services_discovered within timeout",
+    "evidence": {"key_space_down": False, "key_space_up": False, "correlated": False},
+    "artifacts": {"bench": "bench.toml", "android_logcat": "android_logcat.jsonl",
+                  "hid_observer": "hid_observer.jsonl", "esp_uart": "esp_uart.jsonl"},
+}
+with open(os.path.join(run_dir, "summary.json"), "w") as f:
+    json.dump(summary, f, indent=2); f.write("\n")
+print(json.dumps(summary))
+PYEOF
+    exit 1
+  fi
   sleepwalker-adb-arm "$ADB_SERIAL" 1 2>&1 | tee "$RUN_DIR/adb_arm.log" || true
   sleep 1
   sleepwalker-adb-inject-key "$ADB_SERIAL" USB_KEY_SPACE 2 2>&1 | tee "$RUN_DIR/adb_inject.log" || true

@@ -23,7 +23,8 @@
 , sleepwalker-hid-observe, sleepwalker-adb-connect, sleepwalker-adb-arm
 , sleepwalker-adb-inject-key, sleepwalker-adb-release-all
 , sleepwalker-adb-mouse-click, sleepwalker-adb-mouse-move
-, sleepwalker-adb-mouse-release, sleepwalker-adb-kill }:
+, sleepwalker-adb-mouse-release, sleepwalker-adb-kill
+, sleepwalker-esp-reset }:
 let
   primPath = lib.makeBinPath [
     sleepwalker-bench-validate sleepwalker-fw-uart sleepwalker-adb-logcat
@@ -31,6 +32,7 @@ let
     sleepwalker-adb-inject-key sleepwalker-adb-release-all
     sleepwalker-adb-mouse-click sleepwalker-adb-mouse-move
     sleepwalker-adb-mouse-release sleepwalker-adb-kill
+    sleepwalker-esp-reset
   ];
 in
 writeShellScriptBin "sleepwalker-smoke-composite" ''
@@ -66,6 +68,10 @@ PYEOF
   RUN_ID="run_composite_$(date +%s)"
   RUN_DIR="$ARTIFACT_DIR/$RUN_ID"
   mkdir -p "$RUN_DIR"
+  # 1.5 Reset the ESP32-S3 via UART RTS pulse so it boots into a
+  #     known-good state before starting captures and BLE commands.
+  sleepwalker-esp-reset "$ESP_UART" 115200 2>&1 | tee "$RUN_DIR/esp_reset.log" || true
+  sleep 2
 
   # 2. Start one capture set. The HID observer watches both keyboard and
   #    mouse symlinks in one session with --grab so the composite-capable
@@ -97,7 +103,57 @@ PYEOF
   #    machine-readable: seq 1=arm, 2=keyboard inject, 3=mouse click,
   #    4=mouse move, 5=release-all, 6=kill.
   sleepwalker-adb-connect "$ADB_SERIAL" 2>&1 | tee "$RUN_DIR/adb_connect.log" || true
-  sleep 2
+  # Wait for BLE connection to establish before arming. The ESP32-S3
+  # may need time to scan/connect/subscribe after a previous kill.
+  # Poll the logcat for "subscribe" or "services_discovered" events
+  # (indicators that the BLE GATT session is ready for commands).
+  BLE_WAIT_TIMEOUT=15
+  BLE_READY=false
+  for i in $(seq 1 "$BLE_WAIT_TIMEOUT"); do
+    if [ -f "$RUN_DIR/android_logcat.jsonl" ] && \
+       grep -q '"event":"subscribe"\|"event":"services_discovered"' "$RUN_DIR/android_logcat.jsonl" 2>/dev/null; then
+      BLE_READY=true
+      break
+    fi
+    sleep 1
+  done
+  if ! $BLE_READY; then
+    # BLE never connected; skip arm/inject and write a failing summary
+    # that identifies the connection layer as the failure point.
+    kill_captures
+    cp "$BENCH" "$RUN_DIR/bench.toml"
+    python3 - "$RUN_DIR" <<'PYEOF'
+import json, os, sys
+run_dir = sys.argv[1]
+summary = {
+    "ok": False,
+    "status": "fail",
+    "scenario": "composite_smoke",
+    "run_dir": run_dir,
+    "failure_layer": "ble_connection",
+    "reason": "BLE did not reach subscribe/services_discovered within timeout",
+    "evidence": {
+        "keyboard_pass": False,
+        "mouse_pass": False,
+        "observer_ok": False,
+        "correlation_ok": False,
+        "correlated": False,
+    },
+    "artifacts": {
+        "bench": "bench.toml",
+        "android_logcat": "android_logcat.jsonl",
+        "hid_observer": "hid_observer.jsonl",
+        "esp_uart": "esp_uart.jsonl",
+        "adb_connect": "adb_connect.log",
+    },
+}
+with open(os.path.join(run_dir, "summary.json"), "w") as f:
+    json.dump(summary, f, indent=2)
+    f.write("\n")
+print(json.dumps(summary))
+PYEOF
+    exit 1
+  fi
   sleepwalker-adb-arm "$ADB_SERIAL" 1 2>&1 | tee "$RUN_DIR/adb_arm.log" || true
   sleep 1
   # Keyboard: USB_KEY_SPACE via the existing public command path.
@@ -227,38 +283,49 @@ helper_path = next(
 )
 
 # ---- Cross-layer sequence correlation ----
-# Map seq -> per-layer presence. The composite smoke uses seq:
-#   1=arm, 2=keyboard inject, 3=mouse click, 4=mouse move,
-#   5=release-all, 6=kill (sent as 7 by the kill op; tolerate drift).
-expected_seqs = [1, 2, 3, 4, 5, 6]
+# The composite smoke has two seq namespaces:
+#   - ADB command seq (1-7): the smoke's command sequence (intake/command events).
+#     1=arm, 2=keyboard inject, 3=mouse click, 4=mouse move,
+#     5=release-all, 6=kill (sent as 7 by the kill op; tolerate drift).
+#   - BLE frame seq (0, 19, 20, ...): the protocol-level frame sequence
+#     (encode/write/ack events). Multi-frame commands like mouse-click
+#     expand a single command seq into multiple frame seqs.
+# ESP UART only sees BLE frame seqs. Derive expected frame seqs from
+# Android's frame encode events, then check those against ESP UART.
+expected_cmd_seqs = [1, 2, 3, 4, 5, 6]
 def seqs_in(events, key="seq"):
     return {e.get(key) for e in events if isinstance(e.get(key), int)}
-android_seqs = seqs_in(android_events)
+android_cmd_seqs = seqs_in(android_events)
 esp_seqs = seqs_in(esp_events)
+# Firmware-visible frame seqs: Android's ack "sent_to_usb" events carry
+# the frame seqs that the firmware should have received and acted on.
+# These map ADB command seqs (e.g. mouse-click seq=3) to actual BLE
+# frame seqs (e.g. seq=19) because multi-frame commands expand.
+android_firmware_seqs = {
+    e.get("seq") for e in android_events
+    if e.get("component") == "ack" and e.get("event") == "sent_to_usb"
+    and isinstance(e.get("seq"), int)
+}
 # HID observer events do not carry command seq; correlation across HID is
-# by temporal ordering and by the symbolic event identity above. We
-# record android/esp seq coverage so a missing command-layer ack is visible.
+# by temporal ordering and by the symbolic event identity above.
 correlation = {
-    "expected_seqs": expected_seqs,
-    "android_seqs_present": sorted(s for s in expected_seqs if s in android_seqs),
-    "android_seqs_missing": sorted(s for s in expected_seqs if s not in android_seqs),
-    "esp_seqs_present": sorted(s for s in expected_seqs if s in esp_seqs),
-    "esp_seqs_missing": sorted(s for s in expected_seqs if s not in esp_seqs),
+    "expected_cmd_seqs": expected_cmd_seqs,
+    "android_cmd_seqs_present": sorted(s for s in expected_cmd_seqs if s in android_cmd_seqs),
+    "android_cmd_seqs_missing": sorted(s for s in expected_cmd_seqs if s not in android_cmd_seqs),
+    "android_firmware_seqs": sorted(android_firmware_seqs),
+    "esp_seqs": sorted(esp_seqs),
+    "esp_seqs_present": sorted(s for s in android_firmware_seqs if s in esp_seqs),
+    "esp_seqs_missing": sorted(s for s in android_firmware_seqs if s not in esp_seqs),
 }
-# A command is "acked" in Android if any ack event carries its seq.
-acked = {
-    s: any(e.get("component") == "ack" and e.get("seq") == s
-           for e in android_events)
-    for s in expected_seqs
-}
-correlation["android_acked"] = acked
-
+# Every frame that Android sent to USB must appear in ESP UART.
+all_frames_seen_by_esp = len(android_firmware_seqs) > 0 and all(
+    s in esp_seqs for s in android_firmware_seqs
+)
 keyboard_pass = key_space_down and key_space_up
 mouse_pass = btn_left_down and btn_left_up and rel_any
 observer_ok = len(observer_devices) > 0 and helper_version is not None
-correlation_ok = all(acked.get(s, False) for s in [1, 2, 3, 4, 5, 6])
-overall = keyboard_pass and mouse_pass and observer_ok
-
+correlation_ok = all_frames_seen_by_esp
+overall = keyboard_pass and mouse_pass and observer_ok and correlation_ok
 summary = {
     "ok": status == "pass" and overall,
     "status": status if overall else "fail",

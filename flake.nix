@@ -140,20 +140,22 @@
         }).sleepwalker-adb-mouse-release;
         sleepwalker-hid-observe = final.callPackage ./nix/hid-observe.nix { };
         sleepwalker-human-gate = final.callPackage ./nix/human-gate.nix { };
+        sleepwalker-esp-reset = final.callPackage ./nix/esp-reset.nix { };
         sleepwalker-artifacts = final.callPackage ./nix/artifacts.nix { };
         sleepwalker-smoke-keyboard = final.callPackage ./nix/smoke-keyboard.nix {
           inherit (final) sleepwalker-bench-validate sleepwalker-fw-uart
             sleepwalker-adb-logcat sleepwalker-hid-observe
             sleepwalker-adb-connect sleepwalker-adb-arm
             sleepwalker-adb-inject-key sleepwalker-adb-release-all
-            sleepwalker-adb-kill;
+            sleepwalker-adb-kill sleepwalker-esp-reset;
         };
         sleepwalker-smoke-mouse = final.callPackage ./nix/smoke-mouse.nix {
           inherit (final) sleepwalker-bench-validate sleepwalker-fw-uart
             sleepwalker-adb-logcat sleepwalker-hid-observe
             sleepwalker-adb-connect sleepwalker-adb-arm
             sleepwalker-adb-mouse-click sleepwalker-adb-mouse-move
-            sleepwalker-adb-mouse-release sleepwalker-adb-kill;
+            sleepwalker-adb-mouse-release sleepwalker-adb-kill
+            sleepwalker-esp-reset;
         };
         sleepwalker-smoke-composite = final.callPackage ./nix/smoke-composite.nix {
           inherit (final) sleepwalker-bench-validate sleepwalker-fw-uart
@@ -161,7 +163,8 @@
             sleepwalker-adb-connect sleepwalker-adb-arm
             sleepwalker-adb-inject-key sleepwalker-adb-release-all
             sleepwalker-adb-mouse-click sleepwalker-adb-mouse-move
-            sleepwalker-adb-mouse-release sleepwalker-adb-kill;
+            sleepwalker-adb-mouse-release sleepwalker-adb-kill
+            sleepwalker-esp-reset;
         };
       };
 
@@ -229,6 +232,7 @@
             sleepwalker-adb-mouse-release = pkgs.sleepwalker-adb-mouse-release;
             sleepwalker-hid-observe = pkgs.sleepwalker-hid-observe;
             sleepwalker-human-gate = pkgs.sleepwalker-human-gate;
+            sleepwalker-esp-reset = pkgs.sleepwalker-esp-reset;
             sleepwalker-artifacts = pkgs.sleepwalker-artifacts;
             sleepwalker-smoke-keyboard = pkgs.sleepwalker-smoke-keyboard;
             sleepwalker-smoke-mouse = pkgs.sleepwalker-smoke-mouse;
@@ -349,6 +353,11 @@
             sleepwalker-smoke-composite = {
               type = "app";
               program = "${pkgs.sleepwalker-smoke-composite}/bin/sleepwalker-smoke-composite";
+            };
+            # ESP32-S3 hardware reset via UART RTS pulse.
+            sleepwalker-esp-reset = {
+              type = "app";
+              program = "${pkgs.sleepwalker-esp-reset}/bin/sleepwalker-esp-reset";
             };
           };
 
