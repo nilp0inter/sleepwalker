@@ -170,7 +170,7 @@ class MainActivity : AppCompatActivity() {
                     val compiled = TapScriptCompiler.compile(ops, SleepwalkerBleService.hid)
                     compiled.forEach { op ->
                         SleepwalkerBleService.sendOp(op, op.seqId)
-                        Thread.sleep(500)
+                        Thread.sleep(390)
                     }
                 }
             }

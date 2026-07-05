@@ -31,11 +31,11 @@ static const char *TAG = "sw.main";
 #define SW_WORKER_PRIO       5u
 
 // Keyboard tap scripts must hold every report state longer than the HID
-// endpoint poll interval (10 ms) or Linux may miss release states and coalesce
-// consecutive taps. 15 ms keeps throughput high while making each press and
-// release state observable by the host.
-#define SW_TAP_SCRIPT_PRESS_MS 15u
-#define SW_TAP_SCRIPT_GAP_MS   15u
+// endpoint poll interval (4 ms) or Linux may miss release states and coalesce
+// consecutive taps. 6 ms keeps throughput high while making each press and
+// release state observable by the host with a 2 ms safety margin.
+#define SW_TAP_SCRIPT_PRESS_MS 6u
+#define SW_TAP_SCRIPT_GAP_MS   6u
 
 // Emit a release-all for both keyboard and mouse.
 static void sw_release_all(void)

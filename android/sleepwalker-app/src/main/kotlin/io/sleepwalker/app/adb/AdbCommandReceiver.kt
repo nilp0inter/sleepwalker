@@ -184,7 +184,7 @@ class AdbCommandReceiver : BroadcastReceiver() {
                         "text_preview" to decodedText.take(100)))
                     compiled.forEach {
                         SleepwalkerBleService.sendOp(it, it.seqId)
-                        Thread.sleep(500)
+                        Thread.sleep(390)
                     }
                 } else {
                     val err = result.failure

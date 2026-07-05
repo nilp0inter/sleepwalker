@@ -55,7 +55,7 @@ static const uint8_t s_hid_config_desc[] = {
     TUD_CONFIG_DESCRIPTOR(1, 1, 0, TUSB_DESC_TOTAL_LEN,
                           TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
     TUD_HID_DESCRIPTOR(0, 4, false, sizeof(s_hid_report_desc),
-                       0x81, 16, 10),
+                       0x81, 16, 4),
 };
 
 void sw_usb_hid_init(void)
