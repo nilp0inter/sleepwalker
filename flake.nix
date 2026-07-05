@@ -182,6 +182,7 @@
             sleepwalker-adb-kill sleepwalker-esp-reset
             sleepwalker-observer-prepare sleepwalker-text-sink-start
             sleepwalker-text-sink-read sleepwalker-text-sink-ctl;
+          python3 = final.python3.withPackages (ps: with ps; [ hypothesis tomli ]);
         };
         sleepwalker-smoke-mouse = final.callPackage ./nix/smoke-mouse.nix {
           inherit (final) sleepwalker-bench-validate sleepwalker-fw-uart
