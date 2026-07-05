@@ -120,6 +120,19 @@ Power off everything. Connect with Dupont wires:
 | DTR        | GPIO0    | Boot mode (autoflash) |
 | RTS        | EN (RST) | Reset (autoflash) |
 
+> ⚠️ **GPIO0/EN pad availability varies by board.** The ESP32-S3-DevKitC
+> breaks these out as castellated pads. The **Waveshare ESP32-S3-Zero**
+> and similar minimal carriers expose GPIO0/EN only on the tactile BOOT
+> and RESET buttons — not as pads. On those boards you must either:
+> 1. Solder fine wires (30 AWG) to the non-GND leg of the BOOT button
+>    (GPIO0) and the non-GND leg of the RESET button (EN), or
+> 2. Accept manual BOOT+RESET per flash (the agent will ring you via
+>    `noti` each time).
+>
+> Use a multimeter in continuity mode to identify the correct leg: the
+> leg that beeps to a known GND pad is GND; solder to the **other** leg.
+> Add strain relief (hot-glue/Kapton) — castellated pads lift easily.
+
 - TX↔RX crossover is correct.
 - Verify 3.3 V. If unsure, power the ESP32-S3 via its USB port and
   leave the adapter VCC disconnected.
@@ -152,7 +165,7 @@ Use a **separate cable** on the ESP32-S3's native USB port (labelled
 |------|-------------|-------------|
 | 3.1 | Enter the Nix dev shell | Toolchain available |
 | 3.2 | Generate an SSH keypair for the observer | `~/.ssh/sleepwalker_observer_ed25519` + `.pub` |
-| 3.3 | Write the public key into `nix/observer-authorized_keys` | Key baked into the ISO |
+| 3.3 | Write the public key into `nix/observer-authorized_keys` **and `git add` it** (Nix flakes only see git-tracked files — untracked = invisible to the build) | Key baked into the ISO |
 | 3.4 | Build the observer ISO | `.iso` store path |
 | 3.5 | Build the firmware | `firmware/build/sleepwalker-firmware.bin` |
 | 3.6 | Build the APK | `android/.../sleepwalker-app-debug.apk` |
@@ -227,6 +240,16 @@ The agent now takes over for Phases 5–8.
 |------|-------------|-------------|
 | 5.1 | Flash firmware via `sleepwalker-fw-flash` | ESP32-S3 running sleepwalker firmware |
 | 5.2 | Capture UART logs for 5 s | Verify JSONL boot events (`boot`, `ble_init`, `usb_init`, `ready`) |
+> ⚠️ **The boot events fire within ~300 ms of reset.** A naive "reset,
+> then open the port" loses the early events to the port-release race.
+> The capture must own the port across the reset: open `/dev/ttyUSB0`
+> first, pulse DTR/RTS to reset the chip into normal boot (DTR
+> deasserted → GPIO0 high; RTS asserted then deasserted → EN pulse),
+> then read lines — all in the same process. The `sleepwalker-fw-uart`
+> app captures but does not reset; for a clean boot trace, use a
+> pyserial script that resets + captures in one session, or extend
+> `sleepwalker-fw-uart` to pulse DTR/RTS at start.
+
 | 5.3 | SSH to observer, check HID symlink | `/dev/input/by-id/sleepwalker-hid-keyboard` exists |
 
 ### If DTR/RTS are NOT wired `[HANDOFF]` → `[HUMAN]` → `[HANDOFF]`

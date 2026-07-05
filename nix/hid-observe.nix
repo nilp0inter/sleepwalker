@@ -24,9 +24,10 @@ writeShellScriptBin "sleepwalker-hid-observe" ''
   if [ -n "$KNOWN_HOSTS" ]; then
     SSH_ARGS+=(-o UserKnownHostsFile="$KNOWN_HOSTS")
   fi
-  # Run the observer helper on the remote host with grab + timeout.
+  # Run the observer helper on the remote host with timeout (no --grab;
+  # the observer host's input layer may hold the device, causing EBUSY).
   ${ssh} "''${SSH_ARGS[@]}" "$TARGET" \
-    "sleepwalker-hid-observer /dev/input/by-id/sleepwalker-hid-keyboard --grab --timeout $TIMEOUT" \
+    "sleepwalker-hid-observer /dev/input/by-id/sleepwalker-hid-keyboard --timeout $TIMEOUT" \
     > "$OUT" 2>&1
   rc=$?
   if [ $rc -eq 0 ]; then

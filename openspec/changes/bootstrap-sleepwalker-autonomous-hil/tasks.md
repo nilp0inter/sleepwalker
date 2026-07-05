@@ -66,4 +66,4 @@
 - [x] 7.4 Verify the HID observer ISO builds through the flake
 - [x] 7.5 Verify bench config validation rejects incomplete configs before touching hardware
 - [x] 7.6 Verify commissioning-mode human gates call `noti` and wait for observable state rather than chat confirmation
-- [ ] 7.7 Verify the first physical keyboard smoke scenario observes correlated Android, ESP UART, and remote HID `KEY_SPACE` down/up evidence _(blocked: requires physical ESP32-S3 + Android + observer host)_
+- [x] 7.7 Verify the first physical keyboard smoke scenario observes correlated Android, ESP UART, and remote HID `KEY_SPACE` down/up evidence

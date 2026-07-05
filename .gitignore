@@ -277,3 +277,5 @@ firmware/sdkconfig
 firmware/dependencies.lock
 android/build/
 android/.gradle/
+artifacts/
+sleepwalker-hil/bench.toml

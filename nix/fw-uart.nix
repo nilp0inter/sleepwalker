@@ -4,7 +4,7 @@
 # a JSONL artifact file. Stops on SIGINT or after an optional timeout.
 # Designed to run in the background while other HIL operations drive the
 # firmware, then be killed once the scenario completes.
-{ lib, writeShellScriptBin, coreutils, python3 }:
+{ lib, writeShellScriptBin, coreutils, python3, python3Packages }:
 writeShellScriptBin "sleepwalker-fw-uart" ''
   set -euo pipefail
   PORT="''${1:?usage: sleepwalker-fw-uart <port> <out.jsonl> [baud] [timeout_sec]}"

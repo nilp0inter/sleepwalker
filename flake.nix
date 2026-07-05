@@ -121,7 +121,13 @@
         sleepwalker-hid-observe = final.callPackage ./nix/hid-observe.nix { };
         sleepwalker-human-gate = final.callPackage ./nix/human-gate.nix { };
         sleepwalker-artifacts = final.callPackage ./nix/artifacts.nix { };
-        sleepwalker-smoke-keyboard = final.callPackage ./nix/smoke-keyboard.nix { };
+        sleepwalker-smoke-keyboard = final.callPackage ./nix/smoke-keyboard.nix {
+          inherit (final) sleepwalker-bench-validate sleepwalker-fw-uart
+            sleepwalker-adb-logcat sleepwalker-hid-observe
+            sleepwalker-adb-connect sleepwalker-adb-arm
+            sleepwalker-adb-inject-key sleepwalker-adb-release-all
+            sleepwalker-adb-kill;
+        };
       };
 
       perSystem = system:

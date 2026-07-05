@@ -36,11 +36,5 @@
             </intent-filter>
         </receiver>
 
-        <!-- Service-owned BLE connection/session. The receiver delegates
-             long-running BLE work here. -->
-        <service
-            android:name=".ble.SleepwalkerBleService"
-            android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

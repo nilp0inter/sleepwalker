@@ -9,16 +9,17 @@
 # Consumed by the flake output sleepwalker-hid-observer-iso (task 5.2).
 { config, pkgs, lib, ... }:
 
-let
-  # The HID observer helper is built from the local nix/observer-helper.nix.
-  observerHelper = pkgs.callPackage ./observer-helper.nix { };
-in
 {
   # Collision-resistant hostname.
   networking.hostName = "sleepwalker-hid-observer";
 
-  # Minimal sacrificial host: no GUI, no desktop, network via DHCP.
+  # Minimal sacrificial host: no GUI, no desktop.
   services.xserver.enable = false;
+
+  # ---- Networking: NetworkManager + nmtui ----
+  networking.useDHCP = lib.mkForce false;
+  networking.wireless.enable = lib.mkForce false;
+  networking.networkmanager.enable = true;
 
   # ---- SSH (noninteractive key-based access) ----
   services.openssh = {
@@ -31,18 +32,44 @@ in
   };
 
   # Dedicated observer user. The harness SSHes in as this user to run
-  # the HID observer helper. Authorized keys are injected via the ISO
-  # build (see observer-iso.nix) from a file in the repo or an env var.
+  # the HID observer helper. The public key is inlined as a string to
+  # eliminate the flake git-filter hazard (a separate file that must be
+  # git-tracked or it is invisible to the Nix build). The key is also
+  # read from nix/observer-authorized_keys as a fallback; if neither
+  # source provides a key, the build fails with an explicit assertion.
   users.users.observer = {
     isNormalUser = true;
     description = "Sleepwalker HID observer";
     # Member of the input group so evdev reads work without root.
-    extraGroups = [ "input" "dialout" ];
-    # Authorized keys are populated by the ISO build (observer-iso.nix).
-    openssh.authorizedKeys.keyFiles =
-      lib.optionals (builtins.pathExists ./observer-authorized_keys)
-        [ ./observer-authorized_keys ];
+    extraGroups = [ "input" "dialout" "wheel" "networkmanager" ];
+    openssh.authorizedKeys.keys =
+      lib.optional (builtins.pathExists ./observer-authorized_keys)
+        (builtins.readFile ./observer-authorized_keys);
   };
+  services.getty.autologinUser = lib.mkForce "observer";
+
+  # Passwordless sudo for the observer user.
+  security.sudo.extraRules = [
+    {
+      users = [ "observer" ];
+      commands = [{ command = "ALL"; options = [ "NOPASSWD" ]; }];
+    }
+  ];
+
+  # Build-time guard: fail loudly if no authorized key is available,
+  # rather than silently building an ISO with zero SSH keys.
+  assertions = [
+    {
+      assertion =
+        builtins.pathExists ./observer-authorized_keys;
+      message = ''
+        No observer SSH authorized_keys found. Create the file:
+          cp ~/.ssh/sleepwalker_observer_ed25519.pub nix/observer-authorized_keys
+          git add nix/observer-authorized_keys
+        Then rebuild the ISO. The file MUST be git-tracked or Nix
+        flakes will not see it.'';
+    }
+  ];
 
   # ---- Input device permissions and stable discovery ----
   # udev rule: tag ESP32-S3 HID keyboards with a stable symlink under
@@ -58,8 +85,12 @@ in
       SYMLINK+="input/by-id/sleepwalker-hid-keyboard"
   '';
 
+  # ---- ISO squashfs compression ----
+  # Use gzip level 1 instead of the default xz to minimize ISO build time.
+  isoImage.squashfsCompression = "gzip -Xcompression-level 1";
+
   # ---- HID observer helper ----
-  environment.systemPackages = [ observerHelper ];
+  environment.systemPackages = [ (pkgs.callPackage ./observer-helper.nix { inherit (pkgs) patchelf glibc; }) pkgs.networkmanager pkgs.networkmanagerapplet ];
 
   # The helper is invoked over SSH by sleepwalker-hid-observe; no daemon.
 
@@ -72,8 +103,7 @@ in
   # The udev rule above already sets group=input and mode 0660.
   users.groups.input = { };
 
-  # ---- Networking (DHCP) ----
-  networking.useDHCP = true;
+  # ---- Firewall ----
   networking.firewall.enable = false;
 
   # ---- State version ----

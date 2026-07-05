@@ -1,10 +1,11 @@
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -std=c11
+LDFLAGS ?=
 
 all: sleepwalker-hid-observer
 
 sleepwalker-hid-observer: observer-helper.c
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
 install: all
 	mkdir -p $(PREFIX)/bin
