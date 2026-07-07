@@ -281,3 +281,9 @@ artifacts/
 sleepwalker-hil/bench.toml
 # Never commit compiled observer helper binary; let Nix build it.
 nix/observer-helper-src/sleepwalker-hid-observer
+# Generated keymap JSON resources (copied from OmniKeymap at build time)
+android/sleepwalker-core/src/main/res/raw/keymap_*.json
+
+# Nix build symlinks
+result
+result-*

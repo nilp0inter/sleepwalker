@@ -24,6 +24,8 @@ import io.sleepwalker.app.diagnostics.SwLog
 import io.sleepwalker.core.hid.LowLevelHid
 import io.sleepwalker.core.hid.LowLevelOp
 import io.sleepwalker.core.keymap.HostProfile
+import io.sleepwalker.core.keymap.JsonKeymapDatabase
+import io.sleepwalker.core.keymap.SeedKeymapDatabase
 import io.sleepwalker.core.text.TextPlanner
 import io.sleepwalker.core.text.TapScriptCompiler
 import io.sleepwalker.core.hid.LowLevelHidImpl
@@ -79,6 +81,9 @@ class AdbCommandReceiver : BroadcastReceiver() {
         const val EXTRA_AMOUNT = "amount"
         const val EXTRA_TEXT = "text"
         const val EXTRA_TEXT_ENCODED = "text_encoded"
+        const val EXTRA_OS = "os"
+        const val EXTRA_LAYOUT = "layout"
+        const val EXTRA_VARIANT = "variant"
         private const val CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb"
         // All BLE session state is delegated to SleepwalkerBleService.
 
@@ -112,8 +117,12 @@ class AdbCommandReceiver : BroadcastReceiver() {
         val amount = intent.getIntExtra(EXTRA_AMOUNT, 0)
         val text = intent.getStringExtra(EXTRA_TEXT)
         val textEncoded = intent.getStringExtra(EXTRA_TEXT_ENCODED)
+        val os = intent.getStringExtra(EXTRA_OS)
+        val layout = intent.getStringExtra(EXTRA_LAYOUT)
+        val variant = intent.getStringExtra(EXTRA_VARIANT)
         SwLog.adb("intake", seq, mapOf("cmd" to cmd, "key" to key,
-            "dx" to dx, "dy" to dy, "amount" to amount, "text" to text, "text_encoded" to textEncoded))
+            "dx" to dx, "dy" to dy, "amount" to amount, "text" to text, "text_encoded" to textEncoded,
+            "os" to os, "layout" to layout, "variant" to variant))
 
         currentContext = context
 
@@ -121,7 +130,7 @@ class AdbCommandReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             try {
-                handleCommand(cmd, key, text, textEncoded, seq, dx, dy, amount)
+                handleCommand(cmd, key, text, textEncoded, seq, dx, dy, amount, os, layout, variant)
             } catch (e: Exception) {
                 SwLog.failure("exception", seq, mapOf("error" to (e.message ?: "unknown")))
             } finally {
@@ -131,8 +140,9 @@ class AdbCommandReceiver : BroadcastReceiver() {
     }
 
     private fun handleCommand(cmd: String, key: String?, text: String?, textEncoded: String?, seq: Int,
-                              dx: Int, dy: Int, amount: Int) {
-        SwLog.ble("command", seq, mapOf("cmd" to cmd, "key" to key, "text" to text, "text_encoded" to textEncoded))
+                              dx: Int, dy: Int, amount: Int, os: String?, layout: String?, variant: String?) {
+        SwLog.ble("command", seq, mapOf("cmd" to cmd, "key" to key, "text" to text, "text_encoded" to textEncoded,
+            "os" to os, "layout" to layout, "variant" to variant))
         when (cmd) {
             "connect" -> currentContext?.let { SleepwalkerBleService.startScan(it) }
             "status" -> SwLog.ble("status", fields = mapOf(
@@ -173,8 +183,13 @@ class AdbCommandReceiver : BroadcastReceiver() {
                     else -> ""
                 }
 
-                val planner = TextPlanner(hid = SleepwalkerBleService.hid)
-                val result = planner.plan(decodedText, HostProfile.LINUX_US)
+                val resolvedOs = os ?: "linux"
+                val resolvedLayout = layout ?: "us"
+                val profile = HostProfile(resolvedOs, resolvedLayout, variant)
+
+                val keymapDb = currentContext?.let { JsonKeymapDatabase(it.resources) } ?: SeedKeymapDatabase
+                val planner = TextPlanner(database = keymapDb, hid = SleepwalkerBleService.hid)
+                val result = planner.plan(decodedText, profile)
                 if (result.ok) {
                     val ops = result.plan!!
                     val compiled = TapScriptCompiler.compile(ops, SleepwalkerBleService.hid)

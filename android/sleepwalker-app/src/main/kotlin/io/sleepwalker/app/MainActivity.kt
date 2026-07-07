@@ -11,6 +11,11 @@ import android.widget.TextView
 import io.sleepwalker.app.diagnostics.SwLog
 import androidx.appcompat.app.AppCompatActivity
 import io.sleepwalker.app.ble.SleepwalkerBleService
+import android.widget.Spinner
+import android.widget.ArrayAdapter
+import android.view.View
+import android.widget.AdapterView
+import io.sleepwalker.core.keymap.JsonKeymapDatabase
 import io.sleepwalker.core.keymap.HostProfile
 import io.sleepwalker.core.text.TextPlanner
 import io.sleepwalker.core.text.TapScriptCompiler
@@ -27,7 +32,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var feedbackText: TextView
     private lateinit var textInput: EditText
     private val streamLock = Any()
-    private val planner by lazy { TextPlanner(hid = SleepwalkerBleService.hid) }
+    private val keymapDb by lazy { JsonKeymapDatabase(resources) }
+    private val planner by lazy { TextPlanner(database = keymapDb, hid = SleepwalkerBleService.hid) }
+    private var selectedProfile: HostProfile = HostProfile.LINUX_US
 
     private val bleListener = object : SleepwalkerBleService.Companion.StatusListener {
         override fun onStatusReceived(seqId: Int, status: Int, statusName: String) {
@@ -54,14 +61,39 @@ class MainActivity : AppCompatActivity() {
             setPadding(48, 48, 48, 48)
         }
 
-        // Title/Profile Label
-        val titleText = TextView(this).apply {
-            text = "Profile: US QWERTY seed"
-            textSize = 20f
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 0, 0, 32)
+        // Layout Profile Selection Label
+        val profileLabel = TextView(this).apply {
+            text = "Target Layout Profile:"
+            textSize = 18f
+            setPadding(0, 0, 0, 16)
         }
-        rootLayout.addView(titleText)
+        rootLayout.addView(profileLabel)
+
+        // Profile Spinner Dropdown
+        val profileList = keymapDb.profiles.toList()
+        val profileKeys = profileList.map { it.key }
+        val spinnerAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, profileKeys).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        val profileSpinner = Spinner(this).apply {
+            adapter = spinnerAdapter
+            val defaultIdx = profileList.indexOfFirst { it == HostProfile.LINUX_US }.coerceAtLeast(0)
+            setSelection(defaultIdx)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    selectedProfile = profileList[position]
+                    SwLog.event("ui", "profile_selected", fields = mapOf("profile" to selectedProfile.key))
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, 0, 0, 32)
+            }
+        }
+        rootLayout.addView(profileSpinner)
 
         // Button row
         val buttonRow = LinearLayout(this).apply {
@@ -107,6 +139,7 @@ class MainActivity : AppCompatActivity() {
         // Text input
         textInput = EditText(this).apply {
             hint = "Type here to stream characters"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
             setPadding(24, 24, 24, 24)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -151,7 +184,7 @@ class MainActivity : AppCompatActivity() {
         }
         Thread {
             synchronized(streamLock) {
-                val result = planner.plan(inserted, HostProfile.LINUX_US)
+                val result = planner.plan(inserted, selectedProfile)
                 runOnUiThread {
                     if (result.ok) {
                         feedbackText.text = "Sent: $inserted"

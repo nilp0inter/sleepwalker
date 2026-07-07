@@ -22,9 +22,16 @@
       url = "github:tadfisher/android-nixpkgs/stable";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # OmniKeymap keyboard layout database (JSON source for runtime keymap loading).
+    # Fetched as a non-flake input so --override-input works for local dev.
+    omni-keymap = {
+      url = "github:nilp0inter/OmniKeymap/main";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, nixpkgs-esp-dev, android-nixpkgs }:
+  outputs = { self, nixpkgs, flake-utils, nixpkgs-esp-dev, android-nixpkgs, omni-keymap }:
     let
       # Harness host is x86_64-linux; observer ISO is x86_64-linux.
       # Firmware/Android build tooling also targets x86_64-linux hosts.
@@ -57,12 +64,6 @@
         # Project helper: protocol no-hardware verification command.
         sleepwalker-protocol-check = final.callPackage ./nix/protocol-check.nix { };
 
-        # Project helper: bench config validator (no hardware touched).
-        sleepwalker-bench-validate = final.callPackage ./nix/bench-validate.nix { };
-        sleepwalker-fw-build = final.callPackage ./nix/fw-build.nix { cmake = final.cmake; ninja = final.ninja; python3 = final.python3; };
-        sleepwalker-fw-flash = final.callPackage ./nix/fw-flash.nix { cmake = final.cmake; ninja = final.ninja; python3 = final.python3; };
-        sleepwalker-fw-flash-usb = final.callPackage ./nix/fw-flash-usb.nix { python3 = final.python3; esptool = final.esptool; };
-        sleepwalker-fw-uart = final.callPackage ./nix/fw-uart.nix { };
         sleepwalker-apk-build = final.callPackage ./nix/apk-build.nix {
           jdk17 = final.jdk17;
           androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
@@ -71,6 +72,7 @@
             platform-tools
             platforms-android-34
           ]);
+          keymapDb = omni-keymap;
         };
         sleepwalker-apk-install = final.callPackage ./nix/apk-install.nix {
           androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [

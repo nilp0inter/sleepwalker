@@ -35,7 +35,7 @@ Domain knowledge is split into skills that load on demand:
 │   ├── sleepwalker-core/   # Kotlin library: protocol, hid, text, keymap, ble
 │   └── sleepwalker-app/    # Android app: ADB receiver, BLE service, UI
 ├── protocol/               # Python protocol package (single source of truth)
-│   └── src/sleepwalker_protocol/  # frame, opcodes, usages, mouse, status, fixtures
+│   └── src/sleepwalker_protocol/  # frame, opcodes, usages, mouse, status, fixtures, generator
 ├── nix/                    # Harness adapters (sleepwalker-* commands)
 │   ├── adb-ops.nix         # 11 ADB command adapters
 │   ├── smoke-*.nix         # Smoke orchestrators (keyboard, text, mouse, composite)
@@ -51,6 +51,22 @@ Domain knowledge is split into skills that load on demand:
     ├── specs/              # Living specs (evolving with the project)
     └── changes/            # Active and archived changes
 ```
+
+## OmniKeymap Integration
+
+The project uses the [OmniKeymap](https://github.com/nilp0inter/OmniKeymap) database as a Nix flake input to generate Kotlin keyboard layout classes for `sleepwalker-core`. This ensures hermetic builds without external network dependencies.
+
+**Key components:**
+- `omni-keymap` flake input in `flake.nix` (pinned to a specific commit)
+- `nix/keymap-gen.nix` derivation that runs `protocol/src/sleepwalker_protocol/generator.py`
+- `nix/apk-build.nix` copies generated `.kt` files into `android/sleepwalker-core/src/main/kotlin/` before Gradle build
+
+**Local development with custom OmniKeymap:**
+```bash
+nix build .#sleepwalker-keymap-gen --override-input omni-keymap path:/path/to/local/OmniKeymap
+```
+
+This allows testing layout changes without pushing to the OmniKeymap repository.
 
 ## OpenSpec Lifecycle
 

@@ -53,6 +53,19 @@ class TextPlanner(
     private val database: KeymapDatabase = SeedKeymapDatabase,
     private val hid: LowLevelHid,
 ) {
+    private fun getModifierUsages(modifiers: Int): List<HidUsage> {
+        val list = ArrayList<HidUsage>(8)
+        if ((modifiers and 0x01) != 0) list.add(Usages.USB_KEY_LEFTCTRL)
+        if ((modifiers and 0x02) != 0) list.add(Usages.USB_KEY_LEFTSHIFT)
+        if ((modifiers and 0x04) != 0) list.add(Usages.USB_KEY_LEFTALT)
+        if ((modifiers and 0x08) != 0) list.add(Usages.USB_KEY_LEFTMETA)
+        if ((modifiers and 0x10) != 0) list.add(Usages.USB_KEY_RIGHTCTRL)
+        if ((modifiers and 0x20) != 0) list.add(Usages.USB_KEY_RIGHTSHIFT)
+        if ((modifiers and 0x40) != 0) list.add(Usages.USB_KEY_RIGHTALT)
+        if ((modifiers and 0x80) != 0) list.add(Usages.USB_KEY_RIGHTMETA)
+        return list
+    }
+
     /**
      * Plan text input for the given host profile.
      *
@@ -68,26 +81,50 @@ class TextPlanner(
 
         val entryMap = entries.associateBy { it.ch }
         val ops = ArrayList<LowLevelOp>(text.length * 3)
+        var currentModifiers = 0
 
         for (ch in text) {
             val entry = entryMap[ch]
                 ?: return TextPlan(plan = null, failure = TextRenderingFailure.UnrepresentableGlyph(ch, profile))
 
-            val usage = Usages.byUsb(entry.usage) ?: HidUsage(
-                name = "USB_USAGE_0x${"%02x".format(entry.usage)}",
-                usbUsage = entry.usage,
-                evdevCode = 0,
-            )
+            for (tap in entry.taps) {
+                val requiredModifiers = tap.modifiers
+                if (currentModifiers != requiredModifiers) {
+                    val toRelease = currentModifiers and requiredModifiers.inv()
+                    val toPress = requiredModifiers and currentModifiers.inv()
 
-            val isShifted = (entry.modifiers and 0x02) != 0
-            if (isShifted) {
-                ops.add(hid.keyDown(Usages.USB_KEY_LEFTSHIFT))
-                ops.add(hid.keyTap(usage))
-                ops.add(hid.keyUp(Usages.USB_KEY_LEFTSHIFT))
-            } else {
+                    // Release modifiers in reverse order (e.g. RightMeta before LeftCtrl)
+                    val releaseUsages = getModifierUsages(toRelease).asReversed()
+                    for (mod in releaseUsages) {
+                        ops.add(hid.keyUp(mod))
+                    }
+
+                    // Press modifiers in forward order
+                    val pressUsages = getModifierUsages(toPress)
+                    for (mod in pressUsages) {
+                        ops.add(hid.keyDown(mod))
+                    }
+
+                    currentModifiers = requiredModifiers
+                }
+
+                val usage = Usages.byUsb(tap.usage) ?: HidUsage(
+                    name = "USB_USAGE_0x${"%02x".format(tap.usage)}",
+                    usbUsage = tap.usage,
+                    evdevCode = 0,
+                )
                 ops.add(hid.keyTap(usage))
             }
         }
+
+        // Final transition block: Release any remaining active modifiers to return to neutral state
+        if (currentModifiers != 0) {
+            val releaseUsages = getModifierUsages(currentModifiers).asReversed()
+            for (mod in releaseUsages) {
+                ops.add(hid.keyUp(mod))
+            }
+        }
+
         return TextPlan(plan = ops, failure = null)
     }
 }

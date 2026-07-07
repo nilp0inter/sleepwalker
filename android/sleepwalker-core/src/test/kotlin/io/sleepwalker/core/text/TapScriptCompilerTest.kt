@@ -3,6 +3,9 @@ package io.sleepwalker.core.text
 import io.sleepwalker.core.hid.LowLevelHid
 import io.sleepwalker.core.hid.LowLevelOp
 import io.sleepwalker.core.keymap.HostProfile
+import io.sleepwalker.core.keymap.KeymapDatabase
+import io.sleepwalker.core.keymap.KeymapEntry
+import io.sleepwalker.core.keymap.KeymapTap
 import io.sleepwalker.core.protocol.Frame
 import io.sleepwalker.core.protocol.HidUsage
 import io.sleepwalker.core.protocol.Opcodes
@@ -89,6 +92,57 @@ class TapScriptCompilerTest {
         // Second tap: 'A' -> modifier 0x02 (Left Shift), usage 0x04
         assertEquals(0x02.toByte(), taps[1].first)
         assertEquals(0x04.toByte(), taps[1].second)
+    }
+
+    @Test
+    fun testCompileStatefulTextAndMultiModifier() {
+        var capturedTaps: List<Pair<Byte, Byte>>? = null
+        val spyHid = object : LowLevelHid {
+            override fun nextSeqId(): Int = 42
+            override fun arm(seqId: Int) = LowLevelOp(Opcodes.ARM, byteArrayOf(), seqId)
+            override fun disarm(seqId: Int) = LowLevelOp(Opcodes.DISARM, byteArrayOf(), seqId)
+            override fun kill(seqId: Int) = LowLevelOp(Opcodes.KILL, byteArrayOf(), seqId)
+            override fun releaseAll(seqId: Int) = LowLevelOp(Opcodes.RELEASE_ALL, byteArrayOf(), seqId)
+            override fun keyTap(usage: HidUsage, seqId: Int) = LowLevelOp(Opcodes.KEY_TAP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+            override fun keyDown(usage: HidUsage, seqId: Int) = LowLevelOp(Opcodes.KEY_DOWN, byteArrayOf(usage.usbUsage.toByte()), seqId)
+            override fun keyUp(usage: HidUsage, seqId: Int) = LowLevelOp(Opcodes.KEY_UP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+
+            override fun keyboardTapScript(taps: List<Pair<Byte, Byte>>, seqId: Int): LowLevelOp {
+                capturedTaps = taps
+                return LowLevelOp(Opcodes.KEYBOARD_TAP_SCRIPT, byteArrayOf(), seqId)
+            }
+            override fun mouseRelReport(buttons: Int, dx: Int, dy: Int, wheel: Int, pan: Int, seqId: Int) =
+                LowLevelOp(Opcodes.MOUSE_REL_REPORT, byteArrayOf(), seqId)
+        }
+
+        val customDb = object : KeymapDatabase {
+            override fun lookup(profile: HostProfile): List<KeymapEntry> = listOf(
+                KeymapEntry('á', listOf(KeymapTap(0x35, 0), KeymapTap(0x04, 0))),
+                KeymapEntry('€', listOf(KeymapTap(0x08, 0x40)))
+            )
+            override val profiles = listOf(HostProfile.LINUX_US)
+        }
+
+        // Plan "á€"
+        val planner = TextPlanner(database = customDb, hid = spyHid)
+        val plannedOps = planner.plan("á€", HostProfile.LINUX_US).plan!!
+
+        // Compile
+        val compiledOps = TapScriptCompiler.compile(plannedOps, spyHid)
+
+        assertEquals(1, compiledOps.size)
+        assertNotNull(capturedTaps)
+        val taps = capturedTaps!!
+        assertEquals(3, taps.size)
+        // First tap: Grave -> modifier 0x00, usage 0x35
+        assertEquals(0x00.toByte(), taps[0].first)
+        assertEquals(0x35.toByte(), taps[0].second)
+        // Second tap: 'a' -> modifier 0x00, usage 0x04
+        assertEquals(0x00.toByte(), taps[1].first)
+        assertEquals(0x04.toByte(), taps[1].second)
+        // Third tap: 'e' -> modifier 0x40 (Right Alt / AltGr), usage 0x08
+        assertEquals(0x40.toByte(), taps[2].first)
+        assertEquals(0x08.toByte(), taps[2].second)
     }
 
     @Test

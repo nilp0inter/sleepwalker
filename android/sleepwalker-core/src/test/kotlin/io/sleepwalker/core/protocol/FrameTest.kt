@@ -165,7 +165,14 @@ class FrameTest {
             "USB_KEY_COMMA" to Pair(0x36, 51),
             "USB_KEY_DOT" to Pair(0x37, 52),
             "USB_KEY_SLASH" to Pair(0x38, 53),
+            "USB_KEY_LEFTCTRL" to Pair(0xE0, 29),
             "USB_KEY_LEFTSHIFT" to Pair(0xE1, 42),
+            "USB_KEY_LEFTALT" to Pair(0xE2, 56),
+            "USB_KEY_LEFTMETA" to Pair(0xE3, 125),
+            "USB_KEY_RIGHTCTRL" to Pair(0xE4, 97),
+            "USB_KEY_RIGHTSHIFT" to Pair(0xE5, 54),
+            "USB_KEY_RIGHTALT" to Pair(0xE6, 100),
+            "USB_KEY_RIGHTMETA" to Pair(0xE7, 126),
         )
         assertEquals(expected.size, Usages.REGISTRY.size)
         for ((name, pair) in expected) {

@@ -3,6 +3,8 @@ package io.sleepwalker.core.text
 import io.sleepwalker.core.hid.LowLevelHidImpl
 import io.sleepwalker.core.keymap.HostProfile
 import io.sleepwalker.core.keymap.KeymapEntry
+import io.sleepwalker.core.keymap.KeymapDatabase
+import io.sleepwalker.core.keymap.KeymapTap
 import io.sleepwalker.core.keymap.SeedKeymapDatabase
 import io.sleepwalker.core.protocol.Opcodes
 import org.junit.Assert.assertEquals
@@ -128,6 +130,92 @@ class TextPlannerTest {
         assertEquals("keyUp:USB_KEY_LEFTSHIFT", calls[3])
     }
 
+    @Test fun stateful_modifier_planning_reduces_modifier_transitions() {
+        val calls = mutableListOf<String>()
+        val spyHid = object : io.sleepwalker.core.hid.LowLevelHid {
+            override fun nextSeqId(): Int = 42
+            override fun arm(seqId: Int) = io.sleepwalker.core.hid.LowLevelOp(Opcodes.ARM, byteArrayOf(), seqId)
+            override fun disarm(seqId: Int) = io.sleepwalker.core.hid.LowLevelOp(Opcodes.DISARM, byteArrayOf(), seqId)
+            override fun kill(seqId: Int) = io.sleepwalker.core.hid.LowLevelOp(Opcodes.KILL, byteArrayOf(), seqId)
+            override fun releaseAll(seqId: Int) = io.sleepwalker.core.hid.LowLevelOp(Opcodes.RELEASE_ALL, byteArrayOf(), seqId)
+            override fun keyTap(usage: io.sleepwalker.core.protocol.HidUsage, seqId: Int): io.sleepwalker.core.hid.LowLevelOp {
+                calls.add("keyTap:${usage.name}")
+                return io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEY_TAP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+            }
+            override fun keyDown(usage: io.sleepwalker.core.protocol.HidUsage, seqId: Int): io.sleepwalker.core.hid.LowLevelOp {
+                calls.add("keyDown:${usage.name}")
+                return io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEY_DOWN, byteArrayOf(usage.usbUsage.toByte()), seqId)
+            }
+            override fun keyUp(usage: io.sleepwalker.core.protocol.HidUsage, seqId: Int): io.sleepwalker.core.hid.LowLevelOp {
+                calls.add("keyUp:${usage.name}")
+                return io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEY_UP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+            }
+            override fun keyboardTapScript(taps: List<Pair<Byte, Byte>>, seqId: Int) =
+                io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEYBOARD_TAP_SCRIPT, byteArrayOf(), seqId)
+            override fun mouseRelReport(buttons: Int, dx: Int, dy: Int, wheel: Int, pan: Int, seqId: Int) =
+                io.sleepwalker.core.hid.LowLevelOp(Opcodes.MOUSE_REL_REPORT, byteArrayOf(), seqId)
+        }
+
+        val planner = TextPlanner(hid = spyHid)
+        val plan = planner.plan("AAA", HostProfile.LINUX_US).plan!!
+
+        assertEquals(5, plan.size)
+        assertEquals(5, calls.size)
+        assertEquals("keyDown:USB_KEY_LEFTSHIFT", calls[0])
+        assertEquals("keyTap:USB_KEY_A", calls[1])
+        assertEquals("keyTap:USB_KEY_A", calls[2])
+        assertEquals("keyTap:USB_KEY_A", calls[3])
+        assertEquals("keyUp:USB_KEY_LEFTSHIFT", calls[4])
+    }
+
+    @Test fun multi_modifier_and_dead_key_sequences_planned_correctly() {
+        val calls = mutableListOf<String>()
+        val spyHid = object : io.sleepwalker.core.hid.LowLevelHid {
+            override fun nextSeqId(): Int = 42
+            override fun arm(seqId: Int) = io.sleepwalker.core.hid.LowLevelOp(Opcodes.ARM, byteArrayOf(), seqId)
+            override fun disarm(seqId: Int) = io.sleepwalker.core.hid.LowLevelOp(Opcodes.DISARM, byteArrayOf(), seqId)
+            override fun kill(seqId: Int) = io.sleepwalker.core.hid.LowLevelOp(Opcodes.KILL, byteArrayOf(), seqId)
+            override fun releaseAll(seqId: Int) = io.sleepwalker.core.hid.LowLevelOp(Opcodes.RELEASE_ALL, byteArrayOf(), seqId)
+            override fun keyTap(usage: io.sleepwalker.core.protocol.HidUsage, seqId: Int): io.sleepwalker.core.hid.LowLevelOp {
+                calls.add("keyTap:${usage.name}")
+                return io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEY_TAP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+            }
+            override fun keyDown(usage: io.sleepwalker.core.protocol.HidUsage, seqId: Int): io.sleepwalker.core.hid.LowLevelOp {
+                calls.add("keyDown:${usage.name}")
+                return io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEY_DOWN, byteArrayOf(usage.usbUsage.toByte()), seqId)
+            }
+            override fun keyUp(usage: io.sleepwalker.core.protocol.HidUsage, seqId: Int): io.sleepwalker.core.hid.LowLevelOp {
+                calls.add("keyUp:${usage.name}")
+                return io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEY_UP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+            }
+            override fun keyboardTapScript(taps: List<Pair<Byte, Byte>>, seqId: Int) =
+                io.sleepwalker.core.hid.LowLevelOp(Opcodes.KEYBOARD_TAP_SCRIPT, byteArrayOf(), seqId)
+            override fun mouseRelReport(buttons: Int, dx: Int, dy: Int, wheel: Int, pan: Int, seqId: Int) =
+                io.sleepwalker.core.hid.LowLevelOp(Opcodes.MOUSE_REL_REPORT, byteArrayOf(), seqId)
+        }
+
+        val customDb = object : KeymapDatabase {
+            override fun lookup(profile: HostProfile): List<KeymapEntry> = listOf(
+                KeymapEntry('á', listOf(KeymapTap(0x35, 0), KeymapTap(0x04, 0))),
+                KeymapEntry('€', listOf(KeymapTap(0x08, 0x40)))
+            )
+            override val profiles = listOf(HostProfile.LINUX_US)
+        }
+
+        val planner = TextPlanner(database = customDb, hid = spyHid)
+        val plan = planner.plan("á€", HostProfile.LINUX_US).plan!!
+
+        // á maps to Grave tap, then A tap
+        // € maps to AltGr (RightAlt 0x40) down, E tap, AltGr up
+        assertEquals(5, plan.size)
+        assertEquals(5, calls.size)
+        assertEquals("keyTap:USB_KEY_GRAVE", calls[0])
+        assertEquals("keyTap:USB_KEY_A", calls[1])
+        assertEquals("keyDown:USB_KEY_RIGHTALT", calls[2])
+        assertEquals("keyTap:USB_KEY_E", calls[3])
+        assertEquals("keyUp:USB_KEY_RIGHTALT", calls[4])
+    }
+
     @Test fun unrepresentable_glyph_rejected() {
         val planner = TextPlanner(hid = LowLevelHidImpl())
         // '€' is not in the seed US keymap.
@@ -150,15 +238,15 @@ class TextPlannerTest {
     @Test fun seed_keymap_resolves_lowercase_letters() {
         val entry = SeedKeymapDatabase.entryFor('a')
         assertNotNull(entry)
-        assertEquals(0x04, entry!!.usage)
-        assertEquals(0, entry.modifiers)
+        assertEquals(0x04, entry!!.taps.first().usage)
+        assertEquals(0, entry.taps.first().modifiers)
     }
 
     @Test fun seed_keymap_resolves_uppercase_with_shift() {
         val entry = SeedKeymapDatabase.entryFor('A')
         assertNotNull(entry)
-        assertEquals(0x04, entry!!.usage)
+        assertEquals(0x04, entry!!.taps.first().usage)
         // Shift modifier bit 1 = 0x02
-        assertEquals(0x02, entry.modifiers)
+        assertEquals(0x02, entry.taps.first().modifiers)
     }
 }

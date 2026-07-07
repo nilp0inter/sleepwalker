@@ -56,7 +56,7 @@ class AdbCommandReceiverTest {
     @Test
     fun testDecodeBase64Url_valid_shellSensitiveCharacters() {
         // Test shell-sensitive characters that should be safely transmitted
-        val input = "The quick brown fox jumps over the lazy dog! @#\$%^&*()_+-=[]{}|;:,.<>?/~\`"
+        val input = "The quick brown fox jumps over the lazy dog! @#\$%^&*()_+-=[]{}|;:,.<>?/~`"
         val encoded = base64UrlEncode(input)
         val intent = createTypeTextIntent(textEncoded = encoded)
         

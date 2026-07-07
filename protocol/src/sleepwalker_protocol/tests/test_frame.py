@@ -217,7 +217,16 @@ class TestSymbolicUsages:
             "USB_KEY_COMMA": (0x36, 51),
             "USB_KEY_DOT": (0x37, 52),
             "USB_KEY_SLASH": (0x38, 53),
+            "USB_KEY_NONUSBACKSLASH": (0x32, 86),
+            "USB_KEY_RO": (0x87, 135),
+            "USB_KEY_LEFTCTRL": (0xE0, 29),
             "USB_KEY_LEFTSHIFT": (0xE1, 42),
+            "USB_KEY_LEFTALT": (0xE2, 56),
+            "USB_KEY_LEFTMETA": (0xE3, 125),
+            "USB_KEY_RIGHTCTRL": (0xE4, 97),
+            "USB_KEY_RIGHTSHIFT": (0xE5, 54),
+            "USB_KEY_RIGHTALT": (0xE6, 100),
+            "USB_KEY_RIGHTMETA": (0xE7, 126),
         }
         assert len(USAGE_REGISTRY) == len(expected)
         for name, (usb, evdev) in expected.items():

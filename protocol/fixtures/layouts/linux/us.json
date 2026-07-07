@@ -1,0 +1,973 @@
+{
+  "os": "linux",
+  "layout": "us",
+  "mappings": [
+    {
+      "char": "a",
+      "taps": [
+        {
+          "key": "USB_KEY_A",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "b",
+      "taps": [
+        {
+          "key": "USB_KEY_B",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "c",
+      "taps": [
+        {
+          "key": "USB_KEY_C",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "d",
+      "taps": [
+        {
+          "key": "USB_KEY_D",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "e",
+      "taps": [
+        {
+          "key": "USB_KEY_E",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "f",
+      "taps": [
+        {
+          "key": "USB_KEY_F",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "g",
+      "taps": [
+        {
+          "key": "USB_KEY_G",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "h",
+      "taps": [
+        {
+          "key": "USB_KEY_H",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "i",
+      "taps": [
+        {
+          "key": "USB_KEY_I",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "j",
+      "taps": [
+        {
+          "key": "USB_KEY_J",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "k",
+      "taps": [
+        {
+          "key": "USB_KEY_K",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "l",
+      "taps": [
+        {
+          "key": "USB_KEY_L",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "m",
+      "taps": [
+        {
+          "key": "USB_KEY_M",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "n",
+      "taps": [
+        {
+          "key": "USB_KEY_N",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "o",
+      "taps": [
+        {
+          "key": "USB_KEY_O",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "p",
+      "taps": [
+        {
+          "key": "USB_KEY_P",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "q",
+      "taps": [
+        {
+          "key": "USB_KEY_Q",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "r",
+      "taps": [
+        {
+          "key": "USB_KEY_R",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "s",
+      "taps": [
+        {
+          "key": "USB_KEY_S",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "t",
+      "taps": [
+        {
+          "key": "USB_KEY_T",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "u",
+      "taps": [
+        {
+          "key": "USB_KEY_U",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "v",
+      "taps": [
+        {
+          "key": "USB_KEY_V",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "w",
+      "taps": [
+        {
+          "key": "USB_KEY_W",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "x",
+      "taps": [
+        {
+          "key": "USB_KEY_X",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "y",
+      "taps": [
+        {
+          "key": "USB_KEY_Y",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "z",
+      "taps": [
+        {
+          "key": "USB_KEY_Z",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "A",
+      "taps": [
+        {
+          "key": "USB_KEY_A",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "B",
+      "taps": [
+        {
+          "key": "USB_KEY_B",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "C",
+      "taps": [
+        {
+          "key": "USB_KEY_C",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "D",
+      "taps": [
+        {
+          "key": "USB_KEY_D",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "E",
+      "taps": [
+        {
+          "key": "USB_KEY_E",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "F",
+      "taps": [
+        {
+          "key": "USB_KEY_F",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "G",
+      "taps": [
+        {
+          "key": "USB_KEY_G",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "H",
+      "taps": [
+        {
+          "key": "USB_KEY_H",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "I",
+      "taps": [
+        {
+          "key": "USB_KEY_I",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "J",
+      "taps": [
+        {
+          "key": "USB_KEY_J",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "K",
+      "taps": [
+        {
+          "key": "USB_KEY_K",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "L",
+      "taps": [
+        {
+          "key": "USB_KEY_L",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "M",
+      "taps": [
+        {
+          "key": "USB_KEY_M",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "N",
+      "taps": [
+        {
+          "key": "USB_KEY_N",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "O",
+      "taps": [
+        {
+          "key": "USB_KEY_O",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "P",
+      "taps": [
+        {
+          "key": "USB_KEY_P",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "Q",
+      "taps": [
+        {
+          "key": "USB_KEY_Q",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "R",
+      "taps": [
+        {
+          "key": "USB_KEY_R",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "S",
+      "taps": [
+        {
+          "key": "USB_KEY_S",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "T",
+      "taps": [
+        {
+          "key": "USB_KEY_T",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "U",
+      "taps": [
+        {
+          "key": "USB_KEY_U",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "V",
+      "taps": [
+        {
+          "key": "USB_KEY_V",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "W",
+      "taps": [
+        {
+          "key": "USB_KEY_W",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "X",
+      "taps": [
+        {
+          "key": "USB_KEY_X",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "Y",
+      "taps": [
+        {
+          "key": "USB_KEY_Y",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "Z",
+      "taps": [
+        {
+          "key": "USB_KEY_Z",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "0",
+      "taps": [
+        {
+          "key": "USB_KEY_0",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "1",
+      "taps": [
+        {
+          "key": "USB_KEY_1",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "2",
+      "taps": [
+        {
+          "key": "USB_KEY_2",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "3",
+      "taps": [
+        {
+          "key": "USB_KEY_3",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "4",
+      "taps": [
+        {
+          "key": "USB_KEY_4",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "5",
+      "taps": [
+        {
+          "key": "USB_KEY_5",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "6",
+      "taps": [
+        {
+          "key": "USB_KEY_6",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "7",
+      "taps": [
+        {
+          "key": "USB_KEY_7",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "8",
+      "taps": [
+        {
+          "key": "USB_KEY_8",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "9",
+      "taps": [
+        {
+          "key": "USB_KEY_9",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "!",
+      "taps": [
+        {
+          "key": "USB_KEY_1",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "@",
+      "taps": [
+        {
+          "key": "USB_KEY_2",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "#",
+      "taps": [
+        {
+          "key": "USB_KEY_3",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "$",
+      "taps": [
+        {
+          "key": "USB_KEY_4",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "%",
+      "taps": [
+        {
+          "key": "USB_KEY_5",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "^",
+      "taps": [
+        {
+          "key": "USB_KEY_6",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "&",
+      "taps": [
+        {
+          "key": "USB_KEY_7",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "*",
+      "taps": [
+        {
+          "key": "USB_KEY_8",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "(",
+      "taps": [
+        {
+          "key": "USB_KEY_9",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": ")",
+      "taps": [
+        {
+          "key": "USB_KEY_0",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "-",
+      "taps": [
+        {
+          "key": "USB_KEY_MINUS",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "_",
+      "taps": [
+        {
+          "key": "USB_KEY_MINUS",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "=",
+      "taps": [
+        {
+          "key": "USB_KEY_EQUAL",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "+",
+      "taps": [
+        {
+          "key": "USB_KEY_EQUAL",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "[",
+      "taps": [
+        {
+          "key": "USB_KEY_LEFTBRACE",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "{",
+      "taps": [
+        {
+          "key": "USB_KEY_LEFTBRACE",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "]",
+      "taps": [
+        {
+          "key": "USB_KEY_RIGHTBRACE",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "}",
+      "taps": [
+        {
+          "key": "USB_KEY_RIGHTBRACE",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "\\",
+      "taps": [
+        {
+          "key": "USB_KEY_BACKSLASH",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "|",
+      "taps": [
+        {
+          "key": "USB_KEY_BACKSLASH",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": ";",
+      "taps": [
+        {
+          "key": "USB_KEY_SEMICOLON",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": ":",
+      "taps": [
+        {
+          "key": "USB_KEY_SEMICOLON",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "'",
+      "taps": [
+        {
+          "key": "USB_KEY_APOSTROPHE",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "\"",
+      "taps": [
+        {
+          "key": "USB_KEY_APOSTROPHE",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "`",
+      "taps": [
+        {
+          "key": "USB_KEY_GRAVE",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "~",
+      "taps": [
+        {
+          "key": "USB_KEY_GRAVE",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": ",",
+      "taps": [
+        {
+          "key": "USB_KEY_COMMA",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "<",
+      "taps": [
+        {
+          "key": "USB_KEY_COMMA",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": ".",
+      "taps": [
+        {
+          "key": "USB_KEY_DOT",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": ">",
+      "taps": [
+        {
+          "key": "USB_KEY_DOT",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": "/",
+      "taps": [
+        {
+          "key": "USB_KEY_SLASH",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "?",
+      "taps": [
+        {
+          "key": "USB_KEY_SLASH",
+          "modifiers": [
+            "SHIFT"
+          ]
+        }
+      ]
+    },
+    {
+      "char": " ",
+      "taps": [
+        {
+          "key": "USB_KEY_SPACE",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "\n",
+      "taps": [
+        {
+          "key": "USB_KEY_ENTER",
+          "modifiers": []
+        }
+      ]
+    },
+    {
+      "char": "\u001b",
+      "taps": [
+        {
+          "key": "USB_KEY_ESCAPE",
+          "modifiers": []
+        }
+      ]
+    }
+  ]
+}

@@ -149,12 +149,30 @@
         "type": "github"
       }
     },
+    "omni-keymap": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1783387264,
+        "narHash": "sha256-XoGBecTNyuJrn3NOsWu4g1e/h6X7AGE+yhVef/5H64I=",
+        "owner": "nilp0inter",
+        "repo": "OmniKeymap",
+        "rev": "da592a0a207b2900dbfd82083735bb9feb85daba",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nilp0inter",
+        "ref": "main",
+        "repo": "OmniKeymap",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "android-nixpkgs": "android-nixpkgs",
         "flake-utils": "flake-utils_2",
         "nixpkgs": "nixpkgs",
-        "nixpkgs-esp-dev": "nixpkgs-esp-dev"
+        "nixpkgs-esp-dev": "nixpkgs-esp-dev",
+        "omni-keymap": "omni-keymap"
       }
     },
     "systems": {

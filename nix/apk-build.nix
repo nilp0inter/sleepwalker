@@ -4,7 +4,7 @@
 # read-only, so we create a writable overlay (symlinks + writable license
 # dir) at build time. No hardware is touched; this is the no-hardware
 # Android build check used by task 7.3.
-{ lib, writeShellScriptBin, jdk17, androidSdk, gradle, coreutils, git }:
+{ lib, writeShellScriptBin, jdk17, androidSdk, gradle, coreutils, git, keymapDb ? null }:
 let
   sdkRoot = "${androidSdk}/share/android-sdk";
 in
@@ -39,6 +39,24 @@ writeShellScriptBin "sleepwalker-apk-build" ''
       -storepass android -alias androiddebugkey -keypass android \
       -keyalg RSA -keysize 2048 -validity 10000 \
       -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1 || true
+  fi
+  # Copy OmniKeymap JSON database into res/raw as flat keymap_<platform>_<stem>.json resources.
+  # Android res/raw does not support subdirectories; the database is flattened with a
+  # platform-prefixed name so the runtime parser can recover (platform, layout, variant).
+  if [ -n "${keymapDb}" ]; then
+    KEYMAP_DEST="$ANDROID_DIR/sleepwalker-core/src/main/res/raw"
+    rm -f "$KEYMAP_DEST"/keymap_*.json
+    for platform_dir in "${keymapDb}/database"/*; do
+      [ -d "$platform_dir" ] || continue
+      platform="$(basename "$platform_dir")"
+      platform_lower="$(printf '%s' "$platform" | tr 'A-Z' 'a-z')"
+      for json_file in "$platform_dir"/*.json; do
+        [ -f "$json_file" ] || continue
+        stem="$(basename "$json_file" .json)"
+        safe_stem="$(printf '%s' "$stem" | tr '+-' '__' | tr 'A-Z' 'a-z')"
+        cp -f "$json_file" "$KEYMAP_DEST/keymap_''${platform_lower}_''${safe_stem}.json"
+      done
+    done
   fi
   cd "$ANDROID_DIR"
   ${gradle}/bin/gradle --no-daemon --stacktrace :sleepwalker-app:assembleDebug \

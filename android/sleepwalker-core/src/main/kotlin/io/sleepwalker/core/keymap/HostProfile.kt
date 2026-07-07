@@ -34,19 +34,28 @@ data class HostProfile(
 }
 
 /**
- * A single keymap entry mapping a character to the USB HID usage and
- * modifier state required to type it on a given host profile.
+ * A single key tap in a keymap sequence.
  *
- * @property ch        the character this entry produces.
  * @property usage     the USB HID keyboard usage id to press.
  * @property modifiers modifier mask bits (bit 0 = left ctrl, 1 = left shift,
  *                     2 = left alt, 3 = left gui, 4 = right ctrl,
  *                     5 = right shift, 6 = right alt, 7 = right gui).
  */
-data class KeymapEntry(
-    val ch: Char,
+data class KeymapTap(
     val usage: Int,
     val modifiers: Int,
+)
+
+/**
+ * A single keymap entry mapping a character to the sequence of key taps
+ * required to type it on a given host profile.
+ *
+ * @property ch   the character this entry produces.
+ * @property taps the sequence of key taps to execute in order.
+ */
+data class KeymapEntry(
+    val ch: Char,
+    val taps: List<KeymapTap>,
 )
 
 /**
