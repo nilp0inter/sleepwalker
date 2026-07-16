@@ -1,5 +1,9 @@
 package io.sleepwalker.core.protocol
 
+import io.sleepwalker.core.hid.LowLevelHidImpl
+import io.sleepwalker.core.keymap.HostProfile
+import io.sleepwalker.core.text.TextPlanner
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -28,6 +32,39 @@ class FrameTest {
         assertEquals(Opcodes.KEY_TAP, decoded.opcode)
         assertEquals(1, decoded.payloadLen)
         assertEquals(0x2c.toByte(), decoded.payload[0])
+    }
+
+    @Test fun fixtureParity_keyF24() {
+        val usage = Usages.byName("USB_KEY_F24")
+        assertEquals(0x73, usage.usbUsage)
+        assertEquals(194, usage.evdevCode)
+        assertEquals(usage, Usages.byUsb(0x73))
+        assertEquals(usage, Usages.byEvdev(194))
+
+        val encoded = Frame.encode(
+            seqId = 8,
+            opcode = Opcodes.KEY_TAP,
+            payload = byteArrayOf(usage.usbUsage.toByte()),
+        )
+        // Expected to match the Python fixture valid_usb_key_f24.bin.
+        assertEquals("01080011000100731365290f", encoded.toHex())
+
+        val decoded = Frame.decode(encoded)
+        assertEquals(8, decoded.seqId)
+        assertEquals(Opcodes.KEY_TAP, decoded.opcode)
+        assertEquals(0x73.toByte(), decoded.payload.single())
+    }
+
+    @Test fun reservedF24_isAbsentFromPrintableTextPlan() {
+        val f24Usage = Usages.byName("USB_KEY_F24").usbUsage
+        val printableAscii = (0x20..0x7e).joinToString("") { it.toChar().toString() }
+        val plan = TextPlanner(hid = LowLevelHidImpl())
+            .plan(printableAscii, HostProfile.LINUX_US).plan
+            ?: throw AssertionError("printable ASCII must be renderable")
+
+        assertTrue(plan.none { op ->
+            op.payload.any { usage -> (usage.toInt() and 0xFF) == f24Usage }
+        })
     }
 
     @Test fun roundTrip_arm() {
@@ -165,6 +202,7 @@ class FrameTest {
             "USB_KEY_COMMA" to Pair(0x36, 51),
             "USB_KEY_DOT" to Pair(0x37, 52),
             "USB_KEY_SLASH" to Pair(0x38, 53),
+            "USB_KEY_F24" to Pair(0x73, 194),
             "USB_KEY_LEFTCTRL" to Pair(0xE0, 29),
             "USB_KEY_LEFTSHIFT" to Pair(0xE1, 42),
             "USB_KEY_LEFTALT" to Pair(0xE2, 56),

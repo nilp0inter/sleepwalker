@@ -36,7 +36,14 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
+    // Lua 5.4 bridge (Iroiro LuaJava 4.1.0). The JNA-style bridge is a
+    // standard implementation dependency; the Android-native Lua runtime
+    // ships as an AAR bundling prebuilt .so files and must be runtimeOnly
+    // so the consumer (sleepwalker-app) packages the natives.
+    implementation("party.iroiro.luajava:lua54:4.1.0")
+    runtimeOnly("party.iroiro.luajava:android:4.1.0:lua54@aar")
     // BLE transport uses Android Bluetooth APIs only; no extra deps.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    testRuntimeOnly("party.iroiro.luajava:lua54-platform:4.1.0:natives-desktop")
 }

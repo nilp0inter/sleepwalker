@@ -18,10 +18,28 @@ writeShellScriptBin "sleepwalker-adb-logcat" ''
   fi
   # Clear the logcat buffer first so we only capture this scenario.
   ${adb} "''${ADB_ARGS[@]}" logcat -c 2>/dev/null || true
+  CAPTURE_PID=""
+  stop_capture() {
+    if [ -n "$CAPTURE_PID" ]; then
+      kill "$CAPTURE_PID" 2>/dev/null || true
+      wait "$CAPTURE_PID" 2>/dev/null || true
+    fi
+    exit 0
+  }
+  trap stop_capture INT TERM
   if [ "$TIMEOUT" -gt 0 ]; then
-    timeout "$TIMEOUT" ${adb} "''${ADB_ARGS[@]}" logcat -s sleepwalker:I > "$OUT"
+    ${coreutils}/bin/timeout "$TIMEOUT" \
+      ${adb} "''${ADB_ARGS[@]}" logcat -s sleepwalker:I > "$OUT" &
   else
-    ${adb} "''${ADB_ARGS[@]}" logcat -s sleepwalker:I > "$OUT"
+    ${adb} "''${ADB_ARGS[@]}" logcat -s sleepwalker:I > "$OUT" &
+  fi
+  CAPTURE_PID=$!
+  rc=0
+  wait "$CAPTURE_PID" || rc=$?
+  CAPTURE_PID=""
+  trap - INT TERM
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+    exit "$rc"
   fi
   printf '{"ok":true,"out":"%s","serial":"%s"}\n' "$OUT" "$SERIAL"
 ''

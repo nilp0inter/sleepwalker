@@ -41,7 +41,7 @@ from .opcodes import (
     OPCODE_SERIAL_BASE,
     OPCODE_UNSUPPORTED_FIXTURE,
 )
-from .usages import USB_KEY_SPACE
+from .usages import USB_KEY_SPACE, USB_KEY_F24
 from .mouse import (
     MOUSE_BUTTON_LEFT,
     encode_mouse_rel,
@@ -54,6 +54,7 @@ _SEQ_KILL = 0x0004
 _SEQ_RELEASE_ALL = 0x0005
 _SEQ_BAD_CRC = 0x0006
 _SEQ_UNSUPPORTED = 0x0007
+_SEQ_KEY_TAP_F24 = 0x0008
 _SEQ_MOUSE_CLICK_DOWN = 0x0010
 _SEQ_MOUSE_CLICK_UP = 0x0011
 _SEQ_MOUSE_MOVE = 0x0012
@@ -82,6 +83,7 @@ def build_fixtures() -> dict[str, dict]:
     and notes.
     """
     key_tap_payload = bytes([USB_KEY_SPACE.usb_usage])
+    key_tap_f24_payload = bytes([USB_KEY_F24.usb_usage])
     fixtures: dict[str, dict] = {
         "valid_usb_key_space": {
             "name": "valid_usb_key_space",
@@ -91,6 +93,15 @@ def build_fixtures() -> dict[str, dict]:
             "frame_hex": _frame_bytes(_SEQ_KEY_TAP, OPCODE_KEY_TAP, key_tap_payload).hex(),
             "expected_status_chain": ["received", "queued", "sent_to_usb"],
             "notes": "Valid USB_KEY_SPACE key tap; firmware emits key-down then key-up.",
+        },
+        "valid_usb_key_f24": {
+            "name": "valid_usb_key_f24",
+            "seq_id": _SEQ_KEY_TAP_F24,
+            "opcode": OPCODE_KEY_TAP,
+            "payload_hex": key_tap_f24_payload.hex(),
+            "frame_hex": _frame_bytes(_SEQ_KEY_TAP_F24, OPCODE_KEY_TAP, key_tap_f24_payload).hex(),
+            "expected_status_chain": ["received", "queued", "sent_to_usb"],
+            "notes": "Valid USB_KEY_F24 key tap; firmware emits key-down then key-up.",
         },
         "arm": {
             "name": "arm",

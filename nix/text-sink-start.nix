@@ -35,27 +35,33 @@ writeShellScriptBin "sleepwalker-text-sink-start" ''
   fi
   SSH_ARGS+=(-o "BatchMode=yes")
 
-  # Ensure artifact directory exists
   ARTIFACT_DIR=$(dirname "$ARTIFACT_FILE")
   mkdir -p "$ARTIFACT_DIR"
 
-  # Start the sink remotely; it will run until stopped
-  # Use full path to ensure it's found on NixOS observer host
-  # Start the sink remotely; it will run until stopped
-  # Use ~/.local/bin path for manually deployed text-sink
-  # Start the sink remotely on the console VT; it will run until stopped
-  # Use openvt to run on the active VT (tty1) with stdin from the console
-  # Start the sink remotely on the console VT; it will run until stopped
-  # Use sudo openvt to run on the active VT (tty1) with stdin from the console
-  # Start the sink remotely on the console VT; it will run until stopped
-  # Use sudo openvt with -f to force and -l to specify the VT number
-  # The artifact file path is expanded on the harness host, then passed as an argument
-  # Start the sink remotely on the console VT; it will run until stopped
-  # Use sudo openvt with -f to force and -l to specify the VT number
-  # Use full path and explicit quotes to prevent shell concatenation
-  ssh "''${SSH_ARGS[@]}" "$SSH_TARGET" \
-    "sudo openvt -f -l -s -- /home/observer/.local/bin/text-sink '$ARTIFACT_FILE'" &
+  ACTIVE_VT=$(ssh "''${SSH_ARGS[@]}" "$SSH_TARGET" \
+    "sudo fgconsole 2>/dev/null || echo 1")
 
-  SINK_PID=$!
-  echo "$SINK_PID"
+  # Own one fixed VT and one process. Cycling through free VTs and returning
+  # before the process is live makes per-example stop/read/start race.
+  ssh "''${SSH_ARGS[@]}" "$SSH_TARGET" \
+    "sudo pkill -f '^/run/current-system/sw/bin/sleepwalker-text-sink( |$)' \
+       2>/dev/null || true; \
+     sudo rm -f '$ARTIFACT_FILE'; \
+     sudo systemctl stop getty@tty$ACTIVE_VT.service autovt@tty$ACTIVE_VT.service; \
+     sudo setsid openvt -c $ACTIVE_VT -f -s -- \
+       /run/current-system/sw/bin/sleepwalker-text-sink '$ARTIFACT_FILE'"
+
+  for _ in $(seq 1 50); do
+    if ssh "''${SSH_ARGS[@]}" "$SSH_TARGET" \
+      "pgrep -f '^/run/current-system/sw/bin/sleepwalker-text-sink( |$)' \
+       >/dev/null"; then
+      printf '{"ok":true,"vt":%s}\n' "$ACTIVE_VT"
+      exit 0
+    fi
+    sleep 0.1
+  done
+
+  printf '{"ok":false,"error":"sink_start_timeout","vt":%s}\n' \
+    "$ACTIVE_VT" >&2
+  exit 1
 ''

@@ -63,6 +63,18 @@
 
         # Project helper: protocol no-hardware verification command.
         sleepwalker-protocol-check = final.callPackage ./nix/protocol-check.nix { };
+        sleepwalker-editor-conformance-check =
+          final.callPackage ./nix/editor-conformance-check.nix { };
+
+        sleepwalker-bench-validate = final.callPackage ./nix/bench-validate.nix { };
+        sleepwalker-fw-build = final.callPackage ./nix/fw-build.nix {
+          sleepwalker-esp-idf = final.sleepwalker-esp-idf;
+        };
+        sleepwalker-fw-flash = final.callPackage ./nix/fw-flash.nix {
+          sleepwalker-esp-idf = final.sleepwalker-esp-idf;
+        };
+        sleepwalker-fw-flash-usb = final.callPackage ./nix/fw-flash-usb.nix { };
+        sleepwalker-fw-uart = final.callPackage ./nix/fw-uart.nix { };
 
         sleepwalker-apk-build = final.callPackage ./nix/apk-build.nix {
           jdk17 = final.jdk17;
@@ -151,11 +163,27 @@
             build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
           ]);
         }).sleepwalker-adb-type-text-encoded;
+        sleepwalker-adb-set-text-encoded = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-set-text-encoded;
+        sleepwalker-adb-reset-editor = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-reset-editor;
         sleepwalker-hid-observe = final.callPackage ./nix/hid-observe.nix { };
         sleepwalker-text-sink-start = final.callPackage ./nix/text-sink-start.nix { };
         sleepwalker-text-sink-ctl = final.callPackage ./nix/text-sink-ctl.nix { };
         sleepwalker-text-sink-read = final.callPackage ./nix/text-sink-read.nix { };
         sleepwalker-observer-prepare = final.callPackage ./nix/observer-prepare.nix { };
+        sleepwalker-readline-fixture = final.callPackage ./nix/readline-fixture.nix {
+          readline82 = final.callPackage ./nix/readline-8.2.nix { };
+        };
+        sleepwalker-readline-keymap = final.callPackage ./nix/readline-keymap.nix { };
+        sleepwalker-readline-fixture-start = final.callPackage ./nix/readline-fixture-start.nix { };
+        sleepwalker-readline-fixture-ctl = final.callPackage ./nix/readline-fixture-ctl.nix { };
         sleepwalker-human-gate = final.callPackage ./nix/human-gate.nix { };
         sleepwalker-esp-reset = final.callPackage ./nix/esp-reset.nix { };
         sleepwalker-artifacts = final.callPackage ./nix/artifacts.nix { };
@@ -202,6 +230,16 @@
             sleepwalker-adb-mouse-click sleepwalker-adb-mouse-move
             sleepwalker-adb-mouse-release sleepwalker-adb-kill
             sleepwalker-esp-reset;
+        };
+        sleepwalker-smoke-editor-conformance = final.callPackage ./nix/smoke-editor-conformance.nix {
+          inherit (final) sleepwalker-bench-validate sleepwalker-esp-reset
+            sleepwalker-fw-uart sleepwalker-adb-logcat sleepwalker-hid-observe
+            sleepwalker-adb-connect sleepwalker-adb-arm
+            sleepwalker-adb-set-text-encoded sleepwalker-adb-reset-editor
+            sleepwalker-adb-inject-key
+            sleepwalker-adb-release-all sleepwalker-adb-kill
+            sleepwalker-readline-fixture-start sleepwalker-readline-fixture-ctl;
+          python3 = final.python3.withPackages (ps: with ps; [ hypothesis ]);
         };
       };
 
@@ -251,6 +289,8 @@
         {
           packages = {
             sleepwalker-protocol-check = pkgs.sleepwalker-protocol-check;
+            sleepwalker-editor-conformance-check =
+              pkgs.sleepwalker-editor-conformance-check;
             sleepwalker-bench-validate = pkgs.sleepwalker-bench-validate;
             sleepwalker-protocol = pkgs.sleepwalker-protocol;
             sleepwalker-fw-build = pkgs.sleepwalker-fw-build;
@@ -270,11 +310,16 @@
             sleepwalker-adb-mouse-release = pkgs.sleepwalker-adb-mouse-release;
             sleepwalker-adb-type-text = pkgs.sleepwalker-adb-type-text;
             sleepwalker-adb-type-text-encoded = pkgs.sleepwalker-adb-type-text-encoded;
+            sleepwalker-adb-set-text-encoded = pkgs.sleepwalker-adb-set-text-encoded;
+            sleepwalker-adb-reset-editor = pkgs.sleepwalker-adb-reset-editor;
             sleepwalker-hid-observe = pkgs.sleepwalker-hid-observe;
             sleepwalker-text-sink-start = pkgs.sleepwalker-text-sink-start;
             sleepwalker-text-sink-ctl = pkgs.sleepwalker-text-sink-ctl;
             sleepwalker-text-sink-read = pkgs.sleepwalker-text-sink-read;
             sleepwalker-observer-prepare = pkgs.sleepwalker-observer-prepare;
+            sleepwalker-readline-fixture = pkgs.sleepwalker-readline-fixture;
+            sleepwalker-readline-fixture-start = pkgs.sleepwalker-readline-fixture-start;
+            sleepwalker-readline-fixture-ctl = pkgs.sleepwalker-readline-fixture-ctl;
             sleepwalker-human-gate = pkgs.sleepwalker-human-gate;
             sleepwalker-esp-reset = pkgs.sleepwalker-esp-reset;
             sleepwalker-artifacts = pkgs.sleepwalker-artifacts;
@@ -283,6 +328,7 @@
             sleepwalker-smoke-text-identity = pkgs.sleepwalker-smoke-text-identity;
             sleepwalker-smoke-mouse = pkgs.smoke-mouse or pkgs.sleepwalker-smoke-mouse;
             sleepwalker-smoke-composite = pkgs.sleepwalker-smoke-composite;
+            sleepwalker-smoke-editor-conformance = pkgs.sleepwalker-smoke-editor-conformance;
             # Bootable observer ISO (task 5.2). Built via nixosSystem.
             sleepwalker-hid-observer-iso = observerIsoSystem.config.system.build.isoImage;
             default = pkgs.sleepwalker-protocol-check;
@@ -377,6 +423,15 @@
               program = "${pkgs.sleepwalker-adb-kill}/bin/sleepwalker-adb-kill";
             };
 
+            sleepwalker-adb-set-text-encoded = {
+              type = "app";
+              program = "${pkgs.sleepwalker-adb-set-text-encoded}/bin/sleepwalker-adb-set-text-encoded";
+            };
+            sleepwalker-adb-reset-editor = {
+              type = "app";
+              program = "${pkgs.sleepwalker-adb-reset-editor}/bin/sleepwalker-adb-reset-editor";
+            };
+
             # Start remote HID observer over SSH (task 6.5).
             sleepwalker-hid-observe = {
               type = "app";
@@ -387,6 +442,18 @@
             sleepwalker-human-gate = {
               type = "app";
               program = "${pkgs.sleepwalker-human-gate}/bin/sleepwalker-human-gate";
+            };
+
+            # Readline fixture: start on observer host over SSH.
+            sleepwalker-readline-fixture-start = {
+              type = "app";
+              program = "${pkgs.sleepwalker-readline-fixture-start}/bin/sleepwalker-readline-fixture-start";
+            };
+
+            # Readline fixture: control operations over SSH.
+            sleepwalker-readline-fixture-ctl = {
+              type = "app";
+              program = "${pkgs.sleepwalker-readline-fixture-ctl}/bin/sleepwalker-readline-fixture-ctl";
             };
 
             # Composed keyboard-only smoke scenario (task 6.8).
@@ -404,6 +471,11 @@
               type = "app";
               program = "${pkgs.sleepwalker-smoke-composite}/bin/sleepwalker-smoke-composite";
             };
+            sleepwalker-smoke-editor-conformance = {
+              type = "app";
+              program = "${pkgs.sleepwalker-smoke-editor-conformance}/bin/sleepwalker-smoke-editor-conformance";
+            };
+
             # ESP32-S3 hardware reset via UART RTS pulse.
             sleepwalker-esp-reset = {
               type = "app";

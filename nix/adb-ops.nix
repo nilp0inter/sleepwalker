@@ -3,12 +3,13 @@
 # Each operation is a thin, structured wrapper around `adb shell am broadcast`
 # targeting the sleepwalker AdbCommandReceiver. Emits JSON on stdout and
 # exits non-zero on ADB failure.
-{ lib, writeShellScriptBin, androidSdk }:
+{ lib, writeShellScriptBin, androidSdk, python3 }:
 let
   adb = "${androidSdk}/share/android-sdk/platform-tools/adb";
   mkAdb = name: extraArgs:
     writeShellScriptBin name ''
       set -euo pipefail
+      export PATH="${lib.makeBinPath [ python3 ]}:$PATH"
       SERIAL="''${1:-}"
       ADB_ARGS=()
       if [ -n "$SERIAL" ]; then
@@ -117,5 +118,43 @@ in
     OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast -a io.sleepwalker.app.COMMAND \
       -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd type-text --es text_encoded "$TEXT_ENCODED" --ei seq "$SEQ" 2>&1) || true
     printf '{"ok":true,"op":"type-text-encoded","text_encoded":"%s","seq":%s,"adb_out":%s}\n' "$TEXT_ENCODED" "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
+  '';
+
+  # reset-editor: reset the app Editor to empty known state between HIL sequences.
+  sleepwalker-adb-reset-editor = mkAdb "sleepwalker-adb-reset-editor" ''
+    SEQ="''${2:-0}"
+    if OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast --receiver-foreground -a io.sleepwalker.app.COMMAND \
+      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd reset-editor --ei seq "$SEQ" 2>&1); then
+      printf '{"ok":true,"op":"reset-editor","seq":%s,"adb_out":%s}\n' "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
+    else
+      RC=$?
+      printf '{"ok":false,"op":"reset-editor","seq":%s,"adb_rc":%s,"adb_out":%s}\n' "$SEQ" "$RC" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')" >&2
+      exit "$RC"
+    fi
+  '';
+
+  # set-text-encoded: set Editor text via a base64url-encoded payload.
+  # Decoded exactly once and passed to Editor.setText(). Accepts a
+  # complete-text snapshot; the Editor reconciles against its assumed
+  # state and produces a plan. Use this for shell-safe Editor commands.
+  # Returns structured Editor diagnostics (lcp, old_mid, new_mid,
+  # plan_ops, predicted state, transport status) in adb_out.
+  sleepwalker-adb-set-text-encoded = mkAdb "sleepwalker-adb-set-text-encoded" ''
+    TEXT_ENCODED="''${2:-}"
+    SEQ="''${3:-0}"
+    TEXT_ENCODED_ARG="$TEXT_ENCODED"
+    if [ -z "$TEXT_ENCODED_ARG" ]; then
+      # adb shell joins argv into a remote shell command; an ordinary empty
+      # argv element disappears and makes --es consume the following --ei.
+      TEXT_ENCODED_ARG='""'
+    fi
+    if OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast --receiver-foreground -a io.sleepwalker.app.COMMAND \
+      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd set-text --es text_encoded "$TEXT_ENCODED_ARG" --ei seq "$SEQ" 2>&1); then
+      printf '{"ok":true,"op":"set-text-encoded","text_encoded":"%s","seq":%s,"adb_out":%s}\n' "$TEXT_ENCODED" "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
+    else
+      RC=$?
+      printf '{"ok":false,"op":"set-text-encoded","seq":%s,"adb_rc":%s,"adb_out":%s}\n' "$SEQ" "$RC" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')" >&2
+      exit "$RC"
+    fi
   '';
 }

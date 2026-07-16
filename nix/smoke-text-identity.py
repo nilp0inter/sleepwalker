@@ -82,6 +82,8 @@ def run_cmd(args, capture_output=True, check=True):
 # Start setup
 setup_ok = False
 HID_PROC = None
+test_passed = False
+failure_reason = None
 
 try:
     # 1. Prepare observer (console US keymap)
@@ -115,7 +117,8 @@ try:
     setup_ok = True
 
 except Exception as e:
-    print(json.dumps({"phase": "setup_failed", "error": str(e)}), file=sys.stderr)
+    failure_reason = str(e)
+    print(json.dumps({"phase": "setup_failed", "error": failure_reason}), file=sys.stderr)
     setup_ok = False
 
 if setup_ok:

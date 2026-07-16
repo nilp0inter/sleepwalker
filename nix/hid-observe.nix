@@ -19,7 +19,7 @@
 # and /dev/input/by-id/sleepwalker-hid-mouse so a composite smoke
 # observes both nodes by default. Pass --grab to acquire an exclusive
 # grab on every matched node during the observation window.
-{ lib, writeShellScriptBin, openssh }:
+{ lib, writeShellScriptBin, openssh, python3 }:
 let
   ssh = "${openssh}/bin/ssh";
 in
@@ -88,9 +88,30 @@ writeShellScriptBin "sleepwalker-hid-observe" ''
   # Run the observer helper on the remote host. --grab is opt-in: the
   # observer host's input layer may hold the device, causing EBUSY when
   # grab is requested on nodes held by other consumers.
-  ${ssh} "''${SSH_ARGS[@]}" "$TARGET" "$REMOTE_CMD" > "$OUT" 2>&1
-  rc=$?
-  DEVICES_JSON=$(printf '%s' "''${DEVICES[*]}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read().split()))' 2>/dev/null || echo '[]')
+  SSH_PID=""
+  stop_observer() {
+    if [ -n "$SSH_PID" ]; then
+      kill "$SSH_PID" 2>/dev/null || true
+      wait "$SSH_PID" 2>/dev/null || true
+    fi
+    # The remote helper has no controlling terminal and can survive an SSH
+    # channel close. Explicitly release its evdev descriptors and grab.
+    ${ssh} "''${SSH_ARGS[@]}" "$TARGET" \
+      "pkill -f '^sleepwalker-hid-observer ' || true" \
+      >/dev/null 2>&1 || true
+    exit 0
+  }
+  trap stop_observer INT TERM
+  ${ssh} "''${SSH_ARGS[@]}" "$TARGET" "$REMOTE_CMD" > "$OUT" 2>&1 &
+  SSH_PID=$!
+  rc=0
+  wait "$SSH_PID" || rc=$?
+  SSH_PID=""
+  trap - INT TERM
+  DEVICES_JSON=$(printf '%s' "''${DEVICES[*]}" | \
+    ${python3}/bin/python3 -c \
+      'import json,sys;print(json.dumps(sys.stdin.read().split()))' \
+    2>/dev/null || echo '[]')
   if [ $rc -eq 0 ]; then
     printf '{"ok":true,"target":"%s","out":"%s","timeout":%s,"devices":%s,"grab":%s}\n' \
       "$TARGET" "$OUT" "$TIMEOUT" "$DEVICES_JSON" "$([ -n "$GRAB_FLAG" ] && echo true || echo false)"

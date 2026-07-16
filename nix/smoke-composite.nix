@@ -18,7 +18,7 @@
 # evidence so a future failure can be attributed to a specific layer.
 # Preserves autonomous operation: no new human gates for a commissioned
 # bench. Protocol frame, opcode, and public library API behavior unchanged.
-{ lib, writeShellScriptBin, coreutils, python3
+{ lib, writeShellScriptBin, coreutils, gnugrep, python3
 , sleepwalker-bench-validate, sleepwalker-fw-uart, sleepwalker-adb-logcat
 , sleepwalker-hid-observe, sleepwalker-adb-connect, sleepwalker-adb-arm
 , sleepwalker-adb-inject-key, sleepwalker-adb-release-all
@@ -27,6 +27,7 @@
 , sleepwalker-esp-reset }:
 let
   primPath = lib.makeBinPath [
+    coreutils gnugrep python3
     sleepwalker-bench-validate sleepwalker-fw-uart sleepwalker-adb-logcat
     sleepwalker-hid-observe sleepwalker-adb-connect sleepwalker-adb-arm
     sleepwalker-adb-inject-key sleepwalker-adb-release-all
@@ -68,6 +69,10 @@ PYEOF
   RUN_ID="run_composite_$(date +%s)"
   RUN_DIR="$ARTIFACT_DIR/$RUN_ID"
   mkdir -p "$RUN_DIR"
+  # Terminate any app-side session left by an interrupted prior smoke. The
+  # following ESP reset clears the firmware's permanent KILL state.
+  sleepwalker-adb-kill "$ADB_SERIAL" 0 \
+    >"$RUN_DIR/adb_preflight_kill.log" 2>&1 || true
   # 1.5 Reset the ESP32-S3 via UART RTS pulse so it boots into a
   #     known-good state before starting captures and BLE commands.
   sleepwalker-esp-reset "$ESP_UART" 115200 2>&1 | tee "$RUN_DIR/esp_reset.log" || true
@@ -81,12 +86,6 @@ PYEOF
   FW_PID=$!
   sleepwalker-adb-logcat "$RUN_DIR/android_logcat.jsonl" "$ADB_SERIAL" 90 &
   LC_PID=$!
-  sleepwalker-hid-observe "$SSH_TARGET" "$RUN_DIR/hid_observer.jsonl" 90 \
-    "$SSH_IDENTITY" "$SSH_KNOWN_HOSTS" \
-    /dev/input/by-id/sleepwalker-hid-keyboard \
-    /dev/input/by-id/sleepwalker-hid-mouse \
-    --grab &
-  HID_PID=$!
 
   # Cleanup function: kill all background captures.
   kill_captures() {
@@ -98,6 +97,31 @@ PYEOF
     wait $HID_PID 2>/dev/null || true
   }
 
+  # UART capture can observe transient USB re-enumeration after reset. Wait
+  # for one complete BLE initialization and require the boot count to remain
+  # stable before asking Android to connect.
+  for _ in $(seq 1 15); do
+    READY_COUNT=0
+    if [ -f "$RUN_DIR/esp_uart.jsonl" ]; then
+      READY_COUNT=$(grep -c '"component":"boot","event":"ble_init"' \
+        "$RUN_DIR/esp_uart.jsonl" || true)
+    fi
+    if [ "$READY_COUNT" -gt 0 ]; then
+      sleep 3
+      NEXT_COUNT=$(grep -c '"component":"boot","event":"ble_init"' \
+        "$RUN_DIR/esp_uart.jsonl" || true)
+      [ "$READY_COUNT" = "$NEXT_COUNT" ] && break
+    else
+      sleep 1
+    fi
+  done
+  sleepwalker-hid-observe "$SSH_TARGET" "$RUN_DIR/hid_observer.jsonl" 90 \
+    "$SSH_IDENTITY" "$SSH_KNOWN_HOSTS" \
+    /dev/input/by-id/sleepwalker-hid-keyboard \
+    /dev/input/by-id/sleepwalker-hid-mouse \
+    --grab &
+  HID_PID=$!
+
   # 3. Drive the composite scenario through the public app/library command
   #    path. Sequence IDs are explicit so cross-layer correlation is
   #    machine-readable: seq 1=arm, 2=keyboard inject, 3=mouse click,
@@ -107,7 +131,7 @@ PYEOF
   # may need time to scan/connect/subscribe after a previous kill.
   # Poll the logcat for "subscribe" or "services_discovered" events
   # (indicators that the BLE GATT session is ready for commands).
-  BLE_WAIT_TIMEOUT=15
+  BLE_WAIT_TIMEOUT=30
   BLE_READY=false
   for i in $(seq 1 "$BLE_WAIT_TIMEOUT"); do
     if [ -f "$RUN_DIR/android_logcat.jsonl" ] && \

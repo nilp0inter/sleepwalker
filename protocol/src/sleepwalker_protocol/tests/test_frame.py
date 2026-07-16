@@ -164,6 +164,14 @@ class TestSymbolicUsages:
     def test_usage_by_evdev_resolves(self):
         assert usage_by_evdev(0x39) is USB_KEY_SPACE
 
+    def test_f24_registry_lookup_resolves_canonical_values(self):
+        usage = usage_by_name("USB_KEY_F24")
+        assert (usage.name, usage.usb_usage, usage.evdev_code) == (
+            "USB_KEY_F24", 0x73, 194
+        )
+        assert usage_by_usb(0x73) is usage
+        assert usage_by_evdev(194) is usage
+
     def test_usages_parity(self):
         expected = {
             "USB_KEY_NONE": (0x00, 0),
@@ -219,6 +227,7 @@ class TestSymbolicUsages:
             "USB_KEY_SLASH": (0x38, 53),
             "USB_KEY_NONUSBACKSLASH": (0x32, 86),
             "USB_KEY_RO": (0x87, 135),
+            "USB_KEY_F24": (0x73, 194),
             "USB_KEY_LEFTCTRL": (0xE0, 29),
             "USB_KEY_LEFTSHIFT": (0xE1, 42),
             "USB_KEY_LEFTALT": (0xE2, 56),

@@ -52,6 +52,7 @@ class TestFixtureBuild:
         fixtures = build_fixtures()
         required = {
             "valid_usb_key_space",
+            "valid_usb_key_f24",
             "bad_crc",
             "unsupported_opcode",
             "arm",
@@ -74,6 +75,16 @@ class TestFixtureBuild:
         assert frame.seq_id == meta["seq_id"]
         assert frame.opcode == OPCODE_KEY_TAP
         assert frame.payload == bytes([USB_KEY_SPACE.usb_usage])
+
+
+    def test_valid_usb_key_f24_round_trips_as_canonical_key_tap(self):
+        meta = build_fixtures()["valid_usb_key_f24"]
+        data = bytes.fromhex(meta["frame_hex"])
+        assert data.hex() == "01080011000100731365290f"
+        frame = decode_frame(data)
+        assert frame.seq_id == 8
+        assert frame.opcode == OPCODE_KEY_TAP
+        assert frame.payload == b"\x73"
 
     def test_arm_frame_round_trips(self):
         meta = build_fixtures()["arm"]
@@ -134,6 +145,7 @@ class TestFixtureOnDisk:
         names = {f["name"] for f in index["fixtures"]}
         required = {
             "valid_usb_key_space", "bad_crc", "unsupported_opcode",
+            "valid_usb_key_f24",
             "arm", "disarm", "kill", "release_all",
             "mouse_click_down", "mouse_click_up", "mouse_move",
             "mouse_malformed_len", "reserved_abs_pointer", "reserved_serial",

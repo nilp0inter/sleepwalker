@@ -38,19 +38,29 @@ writeShellScriptBin "sleepwalker-text-sink-ctl" ''
     reset)
       # Send SIGUSR1 to reset the capture buffer
       ssh "''${SSH_ARGS[@]}" "$SSH_TARGET" \
-        "sudo pkill -USR1 -x 'sleepwalker-text-sink|text-sink'" || true
+        "sudo pkill -USR1 -f \
+         '^/run/current-system/sw/bin/sleepwalker-text-sink( |$)'" || true
       ;;
 
     stop)
-      # Send SIGUSR2 to flush and stop the sink
+      # SIGUSR2 flushes on process exit. Do not let the caller read the
+      # artifact until every sink has completed that exit path.
       ssh "''${SSH_ARGS[@]}" "$SSH_TARGET" \
-        "sudo pkill -USR2 -x 'sleepwalker-text-sink|text-sink'" || true
+        "sudo pkill -USR2 -f \
+           '^/run/current-system/sw/bin/sleepwalker-text-sink( |$)' \
+           2>/dev/null || true; \
+         i=0; while sudo pgrep -f \
+           '^/run/current-system/sw/bin/sleepwalker-text-sink( |$)' \
+           >/dev/null; do \
+           i=\$((i + 1)); [ \$i -lt 100 ] || exit 1; sleep 0.05; \
+         done"
       ;;
 
     status)
       # Check if the sink is running
       ssh "''${SSH_ARGS[@]}" "$SSH_TARGET" \
-        "pgrep -x 'sleepwalker-text-sink|text-sink' >/dev/null && echo 'running' || echo 'stopped'"
+        "pgrep -f '^/run/current-system/sw/bin/sleepwalker-text-sink( |$)' \
+         >/dev/null && echo 'running' || echo 'stopped'"
       ;;
 
     *)

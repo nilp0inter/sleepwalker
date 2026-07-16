@@ -1,233 +1,298 @@
 package io.sleepwalker.app.adb
 
-import android.content.Context
-import android.content.Intent
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.mockkStatic
-import io.mockk.verify
-import org.junit.After
-import org.junit.Before
+import android.util.Base64
+import io.sleepwalker.core.editor.EditorResult
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-/**
- * Unit tests for AdbCommandReceiver encoded text decoding and plain text preservation.
- *
- * Tests validate:
- * - Base64url encoded text decoding with shell-sensitive characters
- * - Invalid encoded payload rejection
- * - Plain text path preservation
- */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33]) // Android 13
+@Config(sdk = [33])
 class AdbCommandReceiverTest {
 
-    private lateinit var context: Context
-    private lateinit var receiver: AdbCommandReceiver
+    @Test
+    fun strict_set_text_decoder_preserves_shell_sensitive_utf8_snapshot_exactly_once() {
+        val snapshot = "space \"double\" 'single' \\ backslash; pipe| ampersand& dollar\$ parens() redirect<> bang! caret^ percent% equals= bracket[] brace{} tilde~ backtick`"
+        val encoded = encodeBase64Url(snapshot)
 
-    @Before
-    fun setup() {
-        context = RuntimeEnvironment.getApplication()
-        receiver = AdbCommandReceiver()
-    }
+        val decoded = AdbCommandReceiver.decodeBase64UrlStrict(encoded)
 
-    @After
-    fun tearDown() {
-        // Reset any static mocks
+        assertEquals(snapshot, decoded)
+        val invokedWith = mutableListOf<String>()
+        val result = AdbCommandReceiver().decodeAndExecuteSetText(
+            textEncoded = encoded,
+            plainText = "must-not-win",
+            seq = 901,
+            lock = Any(),
+            setTextBlock = { text ->
+                invokedWith += text
+                EditorResult.Synced(text, emptyList())
+            },
+        )
+
+        assertEquals(listOf(snapshot), invokedWith)
+        assertEquals(901, result.seq)
     }
 
     @Test
-    fun testDecodeBase64Url_valid_simpleString() {
-        // Test simple ASCII string
-        val input = "Hello World"
-        val encoded = base64UrlEncode(input)
-        val intent = createTypeTextIntent(textEncoded = encoded)
-        
-        receiver.onReceive(context, intent)
-        
-        // Verify the intent was processed without error
-        // (In a real test, we'd verify SwLog calls or mock the BLE service)
-    }
+    fun strict_set_text_decoder_accepts_urlsafe_padding_forms_and_rejects_noncanonical_syntax() {
+        assertEquals("\u07ff", AdbCommandReceiver.decodeBase64UrlStrict("37-"))
+        assertEquals("\u07ff", AdbCommandReceiver.decodeBase64UrlStrict("37-="))
+        assertEquals("\u083f", AdbCommandReceiver.decodeBase64UrlStrict("4KC_"))
 
-    @Test
-    fun testDecodeBase64Url_valid_shellSensitiveCharacters() {
-        // Test shell-sensitive characters that should be safely transmitted
-        val input = "The quick brown fox jumps over the lazy dog! @#\$%^&*()_+-=[]{}|;:,.<>?/~`"
-        val encoded = base64UrlEncode(input)
-        val intent = createTypeTextIntent(textEncoded = encoded)
-        
-        receiver.onReceive(context, intent)
-        
-        // Verify decoding succeeded
-    }
-
-    @Test
-    fun testDecodeBase64Url_valid_unicodeCharacters() {
-        // Test Unicode characters (emoji, accented chars)
-        val input = "Hello 世界 🌍 ñ"
-        val encoded = base64UrlEncode(input)
-        val intent = createTypeTextIntent(textEncoded = encoded)
-        
-        receiver.onReceive(context, intent)
-        
-        // Verify decoding succeeded
-    }
-
-    @Test
-    fun testDecodeBase64Url_valid_newlinesAndTabs() {
-        // Test whitespace characters
-        val input = "Line 1\nLine 2\tTabbed"
-        val encoded = base64UrlEncode(input)
-        val intent = createTypeTextIntent(textEncoded = encoded)
-        
-        receiver.onReceive(context, intent)
-        
-        // Verify decoding succeeded
-    }
-
-    @Test
-    fun testDecodeBase64Url_invalid_base64UrlFormat() {
-        // Test invalid base64url input (corrupted padding, wrong chars)
-        val invalidEncoded = "not-valid-base64!@#"
-        val intent = createTypeTextIntent(textEncoded = invalidEncoded)
-        
-        receiver.onReceive(context, intent)
-        
-        // Should reject the invalid payload and log failure
-        // (SwLog.failure with "decode_failed" and "invalid_base64url")
-    }
-
-    @Test
-    fun testDecodeBase64Url_invalid_truncatedInput() {
-        // Test truncated base64url input
-        val invalidEncoded = "YWJj".substring(0, 2) // Truncated base64
-        val intent = createTypeTextIntent(textEncoded = invalidEncoded)
-        
-        receiver.onReceive(context, intent)
-        
-        // Should reject the invalid payload
-    }
-
-    @Test
-    fun testDecodeBase64Url_nullInput() {
-        // Test null encoded input (should fall through to plain text path)
-        val intent = createTypeTextIntent(text = "plain text", textEncoded = null)
-        
-        receiver.onReceive(context, intent)
-        
-        // Should use plain text path
-    }
-
-    @Test
-    fun testPlainText_preservation() {
-        // Test that plain text path still works
-        val plainText = "Simple plain text without encoding"
-        val intent = createTypeTextIntent(text = plainText)
-        
-        receiver.onReceive(context, intent)
-        
-        // Should process plain text normally
-    }
-
-    @Test
-    fun testPlainText_shellSensitiveCharacters() {
-        // Test plain text with shell-sensitive characters (would fail in real shell)
-        val plainText = "echo \$HOME"
-        val intent = createTypeTextIntent(text = plainText)
-        
-        receiver.onReceive(context, intent)
-        
-        // Plain text path should accept the string as-is
-    }
-
-    @Test
-    fun testPlainText_emptyString() {
-        // Test empty plain text
-        val intent = createTypeTextIntent(text = "")
-        
-        receiver.onReceive(context, intent)
-        
-        // Should handle empty string
-    }
-
-    @Test
-    fun testEncodedTakesPrecedence_overPlainText() {
-        // Test that when both text and textEncoded are present, textEncoded is used
-        val plainText = "plain"
-        val encodedText = base64UrlEncode("encoded")
-        val intent = createTypeTextIntent(text = plainText, textEncoded = encodedText)
-        
-        receiver.onReceive(context, intent)
-        
-        // Should prefer encoded path over plain text
-    }
-
-    @Test
-    fun testEncoded_andPlainText_bothNull() {
-        // Test when both text and textEncoded are null
-        val intent = createTypeTextIntent(text = null, textEncoded = null)
-        
-        receiver.onReceive(context, intent)
-        
-        // Should handle gracefully (use empty string)
-    }
-
-    @Test
-    fun testDecodeBase64Url_valid_specialUtf8() {
-        // Test special UTF-8 characters (emoji, zero-width joiner, variation selectors)
-        val input = "👨‍👩‍👧‍👦 Family emoji with ZWJ"
-        val encoded = base64UrlEncode(input)
-        val intent = createTypeTextIntent(textEncoded = encoded)
-        
-        receiver.onReceive(context, intent)
-        
-        // Should decode complex emoji correctly
-    }
-
-    @Test
-    fun testDecodeBase64Url_valid_binaryLikeBytes() {
-        // Test binary-like bytes that are valid UTF-8
-        val input = "\u0001\u0002\u0003\u00FF" // Control chars and Latin-1 supplement
-        val encoded = base64UrlEncode(input)
-        val intent = createTypeTextIntent(textEncoded = encoded)
-        
-        receiver.onReceive(context, intent)
-        
-        // Should decode binary-like UTF-8 bytes
-    }
-
-    @Test
-    fun testDecodeBase64Url_invalid_wrongPadding() {
-        // Test base64url with incorrect padding
-        val invalidEncoded = "AAAA====" // Wrong padding
-        val intent = createTypeTextIntent(textEncoded = invalidEncoded)
-        
-        receiver.onReceive(context, intent)
-        
-        // Should reject invalid padding
-    }
-
-    /**
-     * Helper function to create a type-text intent with optional text/encoded parameters
-     */
-    private fun createTypeTextIntent(text: String? = null, textEncoded: String? = null): Intent {
-        return Intent(AdbCommandReceiver.ACTION).apply {
-            putExtra(AdbCommandReceiver.EXTRA_CMD, "type-text")
-            putExtra(AdbCommandReceiver.EXTRA_SEQ, 1)
-            text?.let { putExtra(AdbCommandReceiver.EXTRA_TEXT, it) }
-            textEncoded?.let { putExtra(AdbCommandReceiver.EXTRA_TEXT_ENCODED, it) }
+        val invalidPayloads = listOf(
+            "37+", // Standard Base64 alphabet is not base64url.
+            "4KC/", // Standard Base64 alphabet is not base64url.
+            "37- ", // Whitespace is not part of the encoded payload.
+            "37-\n", // Whitespace is not part of the encoded payload.
+            "3=7-", // Padding may only be the final suffix.
+            "YQ=", // Padded form must have a canonical four-byte length.
+            "37-==", // Padding count/length is noncanonical.
+            "A", // Length remainder one cannot encode bytes.
+        )
+        for (payload in invalidPayloads) {
+            assertEquals(null, AdbCommandReceiver.decodeBase64UrlStrict(payload))
         }
     }
 
-    /**
-     * Helper function to base64url-encode a string (Android implementation)
-     */
-    private fun base64UrlEncode(input: String): String {
-        val bytes = input.toByteArray(Charsets.UTF_8)
-        return android.util.Base64.encodeToString(bytes, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP)
+    @Test
+    fun invalid_set_text_payloads_return_structured_failure_without_hid_execution_while_legacy_decoder_remains_available() {
+        val malformedUtf8 = Base64.encodeToString(
+            byteArrayOf(0xC3.toByte(), 0x28),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+        )
+        val legacyText = "legacy append \\ path"
+        val invokedWith = mutableListOf<String>()
+        val receiver = AdbCommandReceiver()
+
+        val invalidBase64 = receiver.decodeAndExecuteSetText(
+            textEncoded = "invalid%base64",
+            plainText = "must-not-run",
+            seq = 906,
+            lock = Any(),
+            setTextBlock = { text ->
+                invokedWith += text
+                EditorResult.Synced(text, emptyList())
+            },
+        )
+        val malformedEncoding = receiver.decodeAndExecuteSetText(
+            textEncoded = malformedUtf8,
+            plainText = "must-not-run",
+            seq = 907,
+            lock = Any(),
+            setTextBlock = { text ->
+                invokedWith += text
+                EditorResult.Synced(text, emptyList())
+            },
+        )
+
+        assertEquals(emptyList<String>(), invokedWith)
+        assertEquals("EditorFailure", invalidBase64.editorResult)
+        assertEquals("planning", invalidBase64.failureClass)
+        assertEquals("not_sent", invalidBase64.transportStatus)
+        assertEquals("invalid_base64url_or_utf8", invalidBase64.failure)
+        assertEquals(0, invalidBase64.planOps)
+        assertEquals(906, invalidBase64.seq)
+        assertEquals("invalid_base64url_or_utf8", malformedEncoding.failure)
+        assertEquals(907, malformedEncoding.seq)
+
+        val invalidJson = org.json.JSONObject(receiver.setTextDiagnosticJson(invalidBase64))
+        assertFalse(invalidJson.getBoolean("ok"))
+        assertEquals("set-text", invalidJson.getString("cmd"))
+        assertEquals("planning", invalidJson.getString("failure_class"))
+        assertEquals("invalid_base64url_or_utf8", invalidJson.getString("failure"))
+        assertEquals("not_sent", invalidJson.getString("transport_status"))
+        assertEquals(0, invalidJson.getJSONArray("operation_seqs").length())
+        assertEquals(legacyText, AdbCommandReceiver.decodeBase64Url(encodeBase64Url(legacyText)))
+        assertEquals("\uFFFD(", AdbCommandReceiver.decodeBase64Url(malformedUtf8))
     }
+
+    @Test
+    fun set_text_diagnostic_fields_carry_correlated_snapshot_plan_and_prediction_evidence() {
+        val result = SetTextResult(
+            seq = 902,
+            textLength = 13,
+            editorResult = "Synced",
+            planOps = 3,
+            operationSeqs = listOf(40, 41, 42),
+            failureClass = null,
+            transportStatus = "ok",
+            abiVersion = 1,
+            targetId = "readline-emacs-ascii",
+            lcp = 4,
+            oldMid = "old",
+            newMid = "new",
+            predictedBuffer = "done snapshot",
+            predictedPoint = 13,
+            predictedRevision = 7,
+            assumedBuffer = "old snapshot",
+            planOpNames = listOf("key_down", "key_up", "key_tap"),
+            operationStatuses = listOf("40:sent_to_usb", "41:sent_to_usb", "42:sent_to_usb"),
+            failure = null,
+            targetVersion = "1.2.3",
+        )
+
+        val fields = AdbCommandReceiver().setTextDiagnosticFields(result)
+
+        assertEquals(902, fields["seq"])
+        assertEquals(13, fields["text_length"])
+        assertEquals("Synced", fields["result"])
+        assertEquals(3, fields["plan_ops"])
+        assertEquals("40,41,42", fields["operation_seqs"])
+        assertEquals(1, fields["abi_version"])
+        assertEquals("readline-emacs-ascii", fields["target_id"])
+        assertEquals(4, fields["lcp"])
+        assertEquals("old", fields["old_mid"])
+        assertEquals("new", fields["new_mid"])
+        assertEquals("done snapshot", fields["predicted_buffer"])
+        assertEquals(13, fields["predicted_point"])
+        assertEquals(7L, fields["predicted_revision"])
+        assertEquals("old snapshot", fields["assumed_buffer"])
+        assertFalse(fields.containsKey("failure_class"))
+
+        val json = org.json.JSONObject(AdbCommandReceiver().setTextDiagnosticJson(result))
+        assertEquals(902, json.getInt("seq"))
+        assertEquals("set-text", json.getString("cmd"))
+        assertTrue(json.getBoolean("ok"))
+        assertEquals(13, json.getInt("decoded_len"))
+        assertEquals("readline-emacs-ascii", json.getJSONObject("package").getString("id"))
+        assertEquals("1.2.3", json.getJSONObject("package").getString("version"))
+        assertEquals(1, json.getJSONObject("package").getInt("host_abi"))
+        assertEquals("new", json.getString("new_mid"))
+        assertEquals("done snapshot", json.getJSONObject("predicted").getString("buffer"))
+        assertEquals("key_up", json.getJSONArray("plan_ops").getString(1))
+        assertEquals(41, json.getJSONArray("operation_seqs").getInt(1))
+        assertEquals("41:sent_to_usb", json.getJSONArray("operation_statuses").getString(1))
+    }
+
+    @Test
+    fun set_text_diagnostic_fields_preserve_transport_failure_class_and_partial_plan_evidence() {
+        val result = SetTextResult(
+            seq = 903,
+            textLength = 5,
+            editorResult = "EditorFailure",
+            planOps = 2,
+            operationSeqs = listOf(70, 71),
+            failureClass = "transport",
+            transportStatus = "transport: Timeout waiting for ack (seq 71)",
+            abiVersion = 1,
+            targetId = "readline-emacs-ascii",
+            lcp = 2,
+            oldMid = "ld",
+            newMid = "new",
+            predictedBuffer = "new",
+            predictedPoint = 3,
+            predictedRevision = 8,
+            assumedBuffer = "old",
+            planOpNames = listOf("key_down", "key_up"),
+            operationStatuses = listOf("70:sent_to_usb", "71:timeout"),
+            failure = "TransportFailure(reason=Timeout waiting for ack (seq 71))",
+            targetVersion = "1.2.3",
+        )
+
+        val fields = AdbCommandReceiver().setTextDiagnosticFields(result)
+
+        assertEquals("EditorFailure", fields["result"])
+        assertEquals("transport", fields["failure_class"])
+        assertEquals("transport: Timeout waiting for ack (seq 71)", fields["transport_status"])
+        assertEquals(2, fields["plan_ops"])
+        assertEquals("70,71", fields["operation_seqs"])
+        assertEquals("readline-emacs-ascii", fields["target_id"])
+    }
+
+    @Test
+    fun concurrent_set_text_calls_enter_editor_in_arrival_order_without_coalescing_or_interleaving() {
+        val lock = Any()
+        val firstEntered = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val secondSubmitted = CountDownLatch(1)
+        val calls = Collections.synchronizedList(mutableListOf<String>())
+        val outcomes = Collections.synchronizedList(mutableListOf<SetTextResult>())
+        val receiver = AdbCommandReceiver()
+        val setTextBlock: (String) -> EditorResult = { text ->
+            calls += "start:$text"
+            if (text == "first") {
+                firstEntered.countDown()
+                releaseFirst.await()
+            }
+            calls += "finish:$text"
+            EditorResult.Synced(text, emptyList())
+        }
+
+        val first = Thread {
+            outcomes += receiver.executeSetText(
+                text = "first",
+                seq = 904,
+                lock = lock,
+                resultDecorator = { result ->
+                    calls += "status:first"
+                    result.copy(
+                        operationSeqs = listOf(904),
+                        operationStatuses = listOf("904:sent_to_usb"),
+                    )
+                },
+                setTextBlock = setTextBlock,
+            )
+        }
+        val second = Thread {
+            secondSubmitted.countDown()
+            outcomes += receiver.executeSetText(
+                text = "second",
+                seq = 905,
+                lock = lock,
+                resultDecorator = { result ->
+                    calls += "status:second"
+                    result.copy(
+                        operationSeqs = listOf(905),
+                        operationStatuses = listOf("905:sent_to_usb"),
+                    )
+                },
+                setTextBlock = setTextBlock,
+            )
+        }
+        first.start()
+        firstEntered.await()
+        second.start()
+        secondSubmitted.await()
+
+        try {
+            while (second.state == Thread.State.RUNNABLE) {
+                Thread.onSpinWait()
+            }
+            assertEquals(Thread.State.BLOCKED, second.state)
+            assertEquals(listOf("start:first"), calls.toList())
+        } finally {
+            releaseFirst.countDown()
+            first.join()
+            second.join()
+        }
+
+        assertEquals(
+            listOf(
+                "start:first",
+                "finish:first",
+                "status:first",
+                "start:second",
+                "finish:second",
+                "status:second",
+            ),
+            calls.toList(),
+        )
+        assertEquals(listOf(904, 905), outcomes.map { it.seq })
+        assertEquals(listOf(904), outcomes[0].operationSeqs)
+        assertEquals(listOf("904:sent_to_usb"), outcomes[0].operationStatuses)
+        assertEquals(listOf(905), outcomes[1].operationSeqs)
+        assertEquals(listOf("905:sent_to_usb"), outcomes[1].operationStatuses)
+    }
+
+    private fun encodeBase64Url(text: String): String = Base64.encodeToString(
+        text.toByteArray(Charsets.UTF_8),
+        Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+    )
 }

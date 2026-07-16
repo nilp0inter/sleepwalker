@@ -18,7 +18,7 @@ writeShellScriptBin "sleepwalker-apk-install" ''
   if [ -n "$SERIAL" ]; then
     ADB_ARGS+=(-s "$SERIAL")
   fi
-  ${adb} "''${ADB_ARGS[@]}" install -r "$APK" >/tmp/sleepwalker-apk-install.log 2>&1
+  ${adb} "''${ADB_ARGS[@]}" install -r -g "$APK" >/tmp/sleepwalker-apk-install.log 2>&1
   rc=$?
   if [ $rc -eq 0 ]; then
     printf '{"ok":true,"apk":"%s","serial":"%s","log":"/tmp/sleepwalker-apk-install.log"}\n' \

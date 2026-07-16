@@ -15,6 +15,19 @@
       "bin": "valid_usb_key_space.bin"
     },
     {
+      "name": "valid_usb_key_f24",
+      "seq_id": 8,
+      "opcode": 17,
+      "payload_hex": "73",
+      "expected_status_chain": [
+        "received",
+        "queued",
+        "sent_to_usb"
+      ],
+      "notes": "Valid USB_KEY_F24 key tap; firmware emits key-down then key-up.",
+      "bin": "valid_usb_key_f24.bin"
+    },
+    {
       "name": "arm",
       "seq_id": 2,
       "opcode": 1,

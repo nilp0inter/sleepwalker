@@ -45,6 +45,7 @@ writeShellScriptBin "sleepwalker-apk-build" ''
   # platform-prefixed name so the runtime parser can recover (platform, layout, variant).
   if [ -n "${keymapDb}" ]; then
     KEYMAP_DEST="$ANDROID_DIR/sleepwalker-core/src/main/res/raw"
+    mkdir -p "$KEYMAP_DEST"
     rm -f "$KEYMAP_DEST"/keymap_*.json
     for platform_dir in "${keymapDb}/database"/*; do
       [ -d "$platform_dir" ] || continue

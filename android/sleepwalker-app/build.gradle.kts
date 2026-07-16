@@ -18,8 +18,15 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            // Package only the ABIs LuaJava ships natives for; the AAR
+            // also bundles armeabi-v7a/x86 which we exclude to keep the
+            // final APK lean. This filter applies at packaging time to
+            // every native library pulled in transitively via the
+            // runtimeOnly AAR from :sleepwalker-core.
+            abiFilters += setOf("arm64-v8a", "x86_64")
+        }
     }
-
     // Use a writable debug keystore location (the default ~/.android may
     // not be writable in a Nix build environment).
     signingConfigs {

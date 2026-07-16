@@ -9,6 +9,9 @@
 # Consumed by the flake output sleepwalker-hid-observer-iso (task 5.2).
 { config, pkgs, lib, ... }:
 
+let
+  sleepwalkerKeymap = pkgs.callPackage ./readline-keymap.nix { };
+in
 {
   # Collision-resistant hostname.
   networking.hostName = "sleepwalker-hid-observer";
@@ -20,6 +23,11 @@
   networking.useDHCP = lib.mkForce false;
   networking.wireless.enable = lib.mkForce false;
   networking.networkmanager.enable = true;
+
+  # Map the USB HID F24 evdev keycode to the pinned F12 terminal sequence
+  # (ESC [ 24 ~), which is reserved exclusively as the fixture barrier.
+  console.packages = [ sleepwalkerKeymap ];
+  console.keyMap = "sleepwalker";
 
   # ---- SSH (noninteractive key-based access) ----
   services.openssh = {
@@ -101,12 +109,16 @@
   # Use gzip level 1 instead of the default xz to minimize ISO build time.
   isoImage.squashfsCompression = "gzip -Xcompression-level 1";
 
-  # ---- HID observer helper and text sink ----
+  # ---- HID observer helper, text sink, and readline fixture ----
   environment.systemPackages = [
     (pkgs.callPackage ./observer-helper.nix { inherit (pkgs) patchelf glibc; })
+    (let readline82 = pkgs.callPackage ./readline-8.2.nix { }; in
+     pkgs.callPackage ./readline-fixture.nix { inherit readline82; })
+    (pkgs.callPackage ./readline-8.2.nix { })  # Runtime for the fixture (DT_NEEDED)
+    pkgs.socat        # Unix socket I/O for fixture-ctl remote operations
     pkgs.networkmanager
     pkgs.networkmanagerapplet
-    pkgs.kbd  # Console keymap tools (loadkeys, etc.) for identity test preparation
+    pkgs.kbd          # Console keymap tools (loadkeys, etc.) for identity test preparation
   ];
 
   # The helper is invoked over SSH by sleepwalker-hid-observe; no daemon.
