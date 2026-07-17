@@ -173,6 +173,31 @@
             build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
           ]);
         }).sleepwalker-adb-reset-editor;
+        sleepwalker-adb-launch-readline = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-launch-readline;
+        sleepwalker-adb-input-text = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-input-text;
+        sleepwalker-adb-keyevent = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-keyevent;
+        sleepwalker-adb-keycombination = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-keycombination;
+        sleepwalker-adb-dismiss-keyguard = (final.callPackage ./nix/adb-ops.nix {
+          androidSdk = final.sleepwalker-android-sdk (sdkPkgs: with sdkPkgs; [
+            build-tools-34-0-0 cmdline-tools-11-0 platform-tools platforms-android-34
+          ]);
+        }).sleepwalker-adb-dismiss-keyguard;
         sleepwalker-hid-observe = final.callPackage ./nix/hid-observe.nix { };
         sleepwalker-text-sink-start = final.callPackage ./nix/text-sink-start.nix { };
         sleepwalker-text-sink-ctl = final.callPackage ./nix/text-sink-ctl.nix { };
@@ -238,6 +263,9 @@
             sleepwalker-adb-set-text-encoded sleepwalker-adb-reset-editor
             sleepwalker-adb-inject-key
             sleepwalker-adb-release-all sleepwalker-adb-kill
+            sleepwalker-adb-launch-readline
+            sleepwalker-adb-input-text sleepwalker-adb-keyevent
+            sleepwalker-adb-keycombination sleepwalker-adb-dismiss-keyguard
             sleepwalker-readline-fixture-start sleepwalker-readline-fixture-ctl;
           python3 = final.python3.withPackages (ps: with ps; [ hypothesis ]);
         };
@@ -312,6 +340,11 @@
             sleepwalker-adb-type-text-encoded = pkgs.sleepwalker-adb-type-text-encoded;
             sleepwalker-adb-set-text-encoded = pkgs.sleepwalker-adb-set-text-encoded;
             sleepwalker-adb-reset-editor = pkgs.sleepwalker-adb-reset-editor;
+            sleepwalker-adb-launch-readline = pkgs.sleepwalker-adb-launch-readline;
+            sleepwalker-adb-input-text = pkgs.sleepwalker-adb-input-text;
+            sleepwalker-adb-keyevent = pkgs.sleepwalker-adb-keyevent;
+            sleepwalker-adb-keycombination = pkgs.sleepwalker-adb-keycombination;
+            sleepwalker-adb-dismiss-keyguard = pkgs.sleepwalker-adb-dismiss-keyguard;
             sleepwalker-hid-observe = pkgs.sleepwalker-hid-observe;
             sleepwalker-text-sink-start = pkgs.sleepwalker-text-sink-start;
             sleepwalker-text-sink-ctl = pkgs.sleepwalker-text-sink-ctl;

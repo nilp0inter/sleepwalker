@@ -64,8 +64,86 @@ SEQUENCE_TRANSFORMS = [
 
 CLASSIFICATIONS = frozenset({
     "semantic", "planning", "fixture", "sync", "transport",
-    "environment", "non_reproducible",
+    "environment", "non_reproducible", "completion_timeout",
 })
+
+# Fixed UI scenario step types for the deterministic Readline editor drive.
+UI_STEP_TYPES = frozenset({"insert", "delete", "replace", "paste", "clear"})
+
+# Deterministic fixed UI scenario steps. Each tuple:
+#   (step_type: str, expected_text: str, adb_ops: list[tuple[str, ...]])
+# adb_ops is a list of ("text", str) | ("keyevent", int) | ("keycombination", int, int).
+# Uses only simple ASCII without spaces (adb input text limitation).
+FIXED_UI_STEPS: list[tuple[str, str, list[tuple]]] = [
+    ("insert",  "ab",     [("text", "ab")]),
+    ("delete",  "a",      [("keyevent", 67)]),
+    ("insert",  "acde",   [("text", "cde")]),
+    ("replace", "xyz",    [("keycombination", 113, 29), ("text", "xyz")]),
+    ("paste",   "xyzxyz", [
+        ("keycombination", 113, 29),
+        ("keycombination", 113, 31),
+        ("keyevent", 123),
+        ("keycombination", 113, 50),
+    ]),
+    ("clear",   "",       [("keycombination", 113, 29), ("keyevent", 67)]),
+]
+
+
+# ── Fixed UI Scenario Dry-Run Step Generator ────────────────────────────
+
+
+def _generate_fixed_ui_steps(args: dict) -> list[dict]:
+    """Generate deterministic fixed UI step records without hardware.
+
+    Used by dry-run mode and tests. Args dict supports:
+      - out_dir  : ignored, kept for future use
+      - classify : if set, injects that classification into every step
+                   (used for testing classification propagation)
+
+    Returns a list of step dicts matching the UI step record schema.
+    """
+    classify = args.get("classify")
+    steps: list[dict] = []
+    for seq, (step_type, expected_text, _adb_ops) in enumerate(FIXED_UI_STEPS, 1):
+        step: dict = {
+            "seq": seq,
+            "step_type": step_type,
+            "desired_text": expected_text,
+            "change_id": seq,
+            "generation": 1,
+            "editor_state": None,
+            "completion_classification": None,  # Synced
+            "match": True,
+            "classification": "pass",
+            "failure_detail": None,
+            "barrier_consumed": True,
+            "observed": {"buffer": expected_text, "point": len(expected_text)},
+            "predicted": {"buffer": expected_text, "point": len(expected_text)},
+            "duration_sec": 0.001,
+        }
+        if classify and classify != "pass":
+            step["match"] = False
+            step["barrier_consumed"] = False
+            step["classification"] = classify
+            if classify == "completion_timeout":
+                step["failure_detail"] = "completion event not received within timeout"
+            elif classify == "semantic":
+                step["observed"] = {"buffer": "hxllo", "point": 2}
+                step["failure_detail"] = "observed != predicted"
+            elif classify == "sync":
+                step["failure_detail"] = "F24 barrier not consumed"
+            elif classify == "planning":
+                step["failure_detail"] = "planning failure: InconsistentPrediction"
+            elif classify == "transport":
+                step["failure_detail"] = "transport failure: disarmed"
+            elif classify == "fixture":
+                step["failure_detail"] = "fixture health check failed"
+            elif classify == "environment":
+                step["failure_detail"] = "SSH unreachable"
+            elif classify == "non_reproducible":
+                step["failure_detail"] = "non-reproducible on replay"
+        steps.append(step)
+    return steps
 
 
 # ── Parsed Editor Diagnostic ─────────────────────────────────────────────────
@@ -594,6 +672,50 @@ def adb_kill(serial: str, seq: int) -> None:
     """Kill the firmware safety state."""
     run_cmd(["sleepwalker-adb-kill", serial, str(seq)], check=False)
 
+
+
+# ── Fixed UI Scenario ADB Helpers ──────────────────────────────────────────
+
+def adb_launch_readline(serial: str) -> None:
+    """Launch MainActivity in Readline editor mode via EXTRA_READLINE extra."""
+    run_cmd(["sleepwalker-adb-launch-readline", serial])
+
+
+def adb_input_text(serial: str, text: str) -> None:
+    """Type text into the currently focused EditText field."""
+    run_cmd(["sleepwalker-adb-input-text", serial, text])
+
+
+def adb_keyevent(serial: str, keycode: int) -> None:
+    """Send a key event by Android keycode."""
+    run_cmd(["sleepwalker-adb-keyevent", serial, str(keycode)])
+
+
+def adb_keycombination(serial: str, keycode: int, metastate: int) -> None:
+    """Send a key combination (keycode + metastate)."""
+    run_cmd(["sleepwalker-adb-keycombination", serial, str(keycode), str(metastate)])
+
+
+def adb_dismiss_keyguard(serial: str) -> None:
+    """Dismiss the Android lock screen / keyguard."""
+    run_cmd(["sleepwalker-adb-dismiss-keyguard", serial])
+
+
+def execute_ui_adb_ops(serial: str, ops: list[tuple]) -> None:
+    """Execute a list of ADB operations for one UI step.
+
+    ops items: ("text", str) | ("keyevent", int) | ("keycombination", int, int)
+    """
+    for op in ops:
+        kind = op[0]
+        if kind == "text":
+            adb_input_text(serial, op[1])
+        elif kind == "keyevent":
+            adb_keyevent(serial, op[1])
+        elif kind == "keycombination":
+            adb_keycombination(serial, op[1], op[2])
+        else:
+            raise ValueError(f"unknown UI ADB op: {kind}")
 
 # ── Artifact Writer ──────────────────────────────────────────────────────────
 
@@ -1319,7 +1441,8 @@ class ConformanceRunner:
     def run(self) -> tuple[bool, list[dict]]:
         """Run the full conformance scenario.
 
-        Returns (passed: bool, all_steps: list[dict]).
+        Returns (hypothesis_passed: bool, hypothesis_steps: list[dict],
+                 ui_steps: list[dict]).
         """
         self.start_time = time.monotonic()
         profile = self.args.get("profile", "quick")
@@ -1422,7 +1545,6 @@ class ConformanceRunner:
             self._replay_and_reclassify(
                 failing_prefix, all_steps, timeout_mult
             )
-
         # ── Persist full shrunk sequence/prefix, seed and replay context ─
         if self.artifacts and (failed or failing_prefix):
             self.artifacts.write_replay_context(
@@ -1434,6 +1556,31 @@ class ConformanceRunner:
                 max_steps=max_steps,
                 hypothesis_failure=hypothesis_failure,
             )
+
+        # ── Fixed UI scenario ────────────────────────────────────────────
+        # Always runs after the Hypothesis property, regardless of its
+        # success. The Hypothesis property and UI scenario are independent
+        # validations with separate results.
+        self.ui_steps: list[dict] = []
+        try:
+            self.ui_steps = run_fixed_ui_scenario(
+                serial=self.android_serial,
+                observer_target=self.observer_target,
+                observer_identity=self.observer_identity,
+                known_hosts=self.known_hosts,
+                artifacts=self.artifacts,
+                logcat_path=(
+                    str(self.artifacts.android_logcat_path)
+                    if self.artifacts else ""
+                ),
+                timeout_mult=timeout_mult,
+            )
+        except Exception as e:
+            print(json.dumps({
+                "phase": "fixed_ui_scenario",
+                "status": "error",
+                "error": str(e)[:300],
+            }))
 
         return not failed, all_steps
 
@@ -1520,8 +1667,340 @@ class ConformanceRunner:
                 "error": str(e)[:200],
             }))
 
+# ── Fixed UI Scenario Runner ─────────────────────────────────────────────
 
-# ── Dry-Run Mode ─────────────────────────────────────────────────────────────
+def run_fixed_ui_scenario(
+    serial: str,
+    observer_target: str,
+    observer_identity: str,
+    known_hosts: str,
+    artifacts: Optional[ArtifactWriter] = None,
+    logcat_path: str = "",
+    timeout_mult: float = 1.0,
+) -> list[dict]:
+    """Run the deterministic fixed UI scenario against the hardware bench.
+
+    Each step:
+      1. Execute ADB input command(s) to trigger a TextWatcher change.
+      2. Wait for the matching editor/ui_change_result in logcat.
+      3. If completion classification is non-null → classify as planning/transport.
+      4. Inject F24 barrier key.
+      5. Wait for fixture to consume F24.
+      6. Take authoritative fixture snapshot.
+      7. Compare observed buffer/point with predicted/desired.
+
+    Resets the fixture and Editor before driving the UI steps.
+
+    Returns a list of step record dicts.
+    """
+    steps: list[dict] = []
+
+    # Reset fixture and Editor before starting the activity.
+    try:
+        fixture_reset(observer_target, observer_identity, known_hosts)
+        adb_reset_editor(serial, 0)
+        deadline = time.monotonic() + 10.0 * timeout_mult
+        while True:
+            health = fixture_health(observer_target, observer_identity, known_hosts)
+            if health.get("ok") and health.get("baseline"):
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("fixture did not reach healthy baseline for UI scenario")
+            time.sleep(0.1)
+    except Exception as e:
+        err_step: dict = {
+            "seq": -1,
+            "step_type": "setup",
+            "desired_text": "",
+            "change_id": None,
+            "generation": None,
+            "editor_state": None,
+            "completion_classification": "environment",
+            "match": False,
+            "classification": "fixture",
+            "failure_detail": f"UI scenario setup failed: {e}",
+            "barrier_consumed": False,
+            "observed": None,
+            "predicted": None,
+            "duration_sec": 0.0,
+        }
+        steps.append(err_step)
+        print(json.dumps({"phase": "fixed_ui_scenario", "status": "setup_failed",
+                           "error": str(e)[:200]}))
+        return steps
+
+    # Wake device, dismiss keyguard, and launch Readline activity.
+    try:
+        adb_keyevent(serial, 224)  # KEYCODE_WAKEUP is idempotent; POWER would toggle an awake display off.
+        time.sleep(1.0)
+        adb_dismiss_keyguard(serial)
+        time.sleep(1.0)
+        adb_launch_readline(serial)
+        time.sleep(2.0)  # Allow activity to start and bind service
+    except Exception as e:
+        err_step = {
+            "seq": -1,
+            "step_type": "wake",
+            "desired_text": "",
+            "change_id": None,
+            "generation": None,
+            "editor_state": None,
+            "completion_classification": "environment",
+            "match": False,
+            "classification": "environment",
+            "failure_detail": f"wake/launch failed: {e}",
+            "barrier_consumed": False,
+            "observed": None,
+            "predicted": None,
+            "duration_sec": 0.0,
+        }
+        steps.append(err_step)
+        print(json.dumps({"phase": "fixed_ui_scenario", "status": "wake_launch_failed",
+                           "error": str(e)[:200]}))
+        return steps
+    seq_counter: int = 0
+
+    for step_idx, (step_type, expected_text, adb_ops) in enumerate(FIXED_UI_STEPS):
+        seq_counter += 1
+        step = {
+            "seq": seq_counter,
+            "step_type": step_type,
+            "desired_text": expected_text,
+            "change_id": None,
+            "generation": None,
+            "editor_state": None,
+            "completion_classification": None,
+            "match": None,
+            "classification": None,
+            "failure_detail": None,
+            "barrier_consumed": False,
+            "observed": None,
+            "predicted": None,
+            "duration_sec": 0.0,
+        }
+        step_start = time.monotonic()
+
+        try:
+            # 1. Execute ADB input operations for this step
+            execute_ui_adb_ops(serial, adb_ops)
+            time.sleep(0.5)  # Allow TextWatcher + FIFO to process
+
+            # 2. Wait for editor/ui_change_result completion event
+            try:
+                completion_event = _wait_for_android_event_generic(
+                    logcat_path,
+                    lambda event: (
+                        event.get("component") == "editor"
+                        and event.get("event") == "ui_change_result"
+                    ),
+                    "fixed_ui_step",
+                    timeout_sec=20.0 * timeout_mult,
+                )
+            except RuntimeError as e:
+                step["classification"] = "completion_timeout"
+                step["match"] = False
+                step["failure_detail"] = str(e)[:300]
+                step["duration_sec"] = time.monotonic() - step_start
+                steps.append(step)
+                
+                continue
+
+            # Extract completion fields
+            fields = completion_event.get("fields", {}) or {}
+            change_id = fields.get("change_id")
+            generation = fields.get("generation")
+            desired_text_event = fields.get("desired_text", "")
+            editor_state = fields.get("editor_state")
+            completion_cls = fields.get("classification")  # null = Synced
+
+            step["change_id"] = change_id
+            step["generation"] = generation
+            step["editor_state"] = editor_state
+            step["completion_classification"] = completion_cls
+
+            # 3. Classify completion outcome
+            if completion_cls is not None:
+                # Non-null classification = Editor rejected before HID
+                if completion_cls in (
+                    "PlanningError", "InconsistentPrediction",
+                    "UnrepresentableContent", "UnsupportedBehavior",
+                ):
+                    step["classification"] = "planning"
+                elif completion_cls == "TransportFailure":
+                    step["classification"] = "transport"
+                else:
+                    step["classification"] = "environment"
+                step["match"] = False
+                step["failure_detail"] = (
+                    f"Editor completion classification={completion_cls}"
+                )
+                step["duration_sec"] = time.monotonic() - step_start
+                steps.append(step)
+                
+                continue
+
+            # Synced — proceed with F24 barrier
+            # 4. Inject F24
+            adb_inject_f24(serial, seq_counter)
+
+            # 5. Await barrier
+            barrier_ok = fixture_await_barrier(
+                observer_target, observer_identity, known_hosts,
+                timeout_sec=15.0 * timeout_mult,
+            )
+            step["barrier_consumed"] = barrier_ok
+
+            if not barrier_ok:
+                step["classification"] = "sync"
+                step["match"] = False
+                step["failure_detail"] = "F24 barrier not consumed for UI step"
+                step["duration_sec"] = time.monotonic() - step_start
+                steps.append(step)
+                
+                continue
+
+            # 6. Take authoritative fixture snapshot
+            snap = fixture_snapshot(
+                observer_target, observer_identity, known_hosts,
+            )
+            observed_buffer = snap.get("buffer", "")
+            observed_point = snap.get("point")
+            observed_contract = snap.get("contract_version")
+
+            step["observed"] = {
+                "buffer": observed_buffer,
+                "point": observed_point,
+                "contract_version": observed_contract,
+            }
+
+            # 7. Compare buffer/point
+            # Predicted buffer comes from editor_state.predictedBuffer, fallback to desired_text
+            predicted_buffer = None
+            predicted_point = None
+            if editor_state and isinstance(editor_state, dict):
+                predicted_buffer = editor_state.get("predictedBuffer")
+                predicted_point = editor_state.get("predictedPoint")
+            if predicted_buffer is None:
+                predicted_buffer = expected_text
+            if predicted_point is None:
+                predicted_point = len(predicted_buffer)
+
+            step["predicted"] = {
+                "buffer": predicted_buffer,
+                "point": predicted_point,
+            }
+
+            buffer_match = observed_buffer == predicted_buffer
+            point_match = observed_point == predicted_point
+
+            if buffer_match and point_match and predicted_buffer == expected_text:
+                step["classification"] = "pass"
+                step["match"] = True
+            elif buffer_match and point_match:
+                # predicted==observed but != expected_text
+                step["classification"] = "semantic"
+                step["match"] = False
+                step["failure_detail"] = (
+                    f"predicted==observed but != expected_text: "
+                    f"expected={repr(expected_text)}, "
+                    f"predicted={repr(predicted_buffer)}, "
+                    f"observed={repr(observed_buffer)}"
+                )
+            elif not buffer_match:
+                step["classification"] = "semantic"
+                step["match"] = False
+                step["failure_detail"] = (
+                    f"observed != predicted: "
+                    f"expected={repr(expected_text)}, "
+                    f"predicted={repr(predicted_buffer)}, "
+                    f"observed={repr(observed_buffer)}, "
+                    f"point={observed_point}"
+                )
+            else:
+                step["classification"] = "semantic"
+                step["match"] = False
+                step["failure_detail"] = (
+                    f"point mismatch: "
+                    f"observed_point={observed_point}, "
+                    f"predicted_point={predicted_point}"
+                )
+
+            # Write per-step fixture snapshot
+            if artifacts:
+                artifacts.write_fixture_snapshot({
+                    "seq": seq_counter,
+                    "step_type": step_type,
+                    "desired": expected_text,
+                    "snapshot": snap,
+                    "timestamp": time.monotonic(),
+                    "scenario": "fixed_ui",
+                })
+
+        except subprocess.CalledProcessError as e:
+            step["classification"] = "environment"
+            step["match"] = False
+            step["failure_detail"] = (
+                f"command failed: {' '.join(e.cmd)}: {e.stderr[:200]}"
+            )
+        except RuntimeError as e:
+            step["classification"] = "fixture"
+            step["match"] = False
+            step["failure_detail"] = str(e)[:500]
+        except Exception as e:
+            step["classification"] = "environment"
+            step["match"] = False
+            step["failure_detail"] = f"unexpected error: {e}"
+
+        step["duration_sec"] = time.monotonic() - step_start
+        steps.append(step)
+        
+
+    print(json.dumps({
+        "phase": "fixed_ui_scenario",
+        "status": "complete",
+        "steps": len(steps),
+        "failing": sum(1 for s in steps if s.get("match") is False),
+    }))
+
+    return steps
+
+
+def _wait_for_android_event_generic(
+    logcat_path: str,
+    predicate: Callable[[dict], bool],
+    phase: str,
+    timeout_sec: float = 30.0,
+) -> dict:
+    """Wait for one structured SwLog event from a logcat file.
+
+    Standalone version of ConformanceRunner._wait_for_android_event
+    for use by the module-level fixed UI scenario function.
+    """
+    deadline = time.monotonic() + timeout_sec
+    seen_lines = 0
+    while time.monotonic() < deadline:
+        try:
+            with open(logcat_path, encoding="utf-8", errors="replace") as log_file:
+                lines = log_file.readlines()
+        except FileNotFoundError:
+            lines = []
+
+        for line in lines[seen_lines:]:
+            json_start = line.find("{")
+            if json_start < 0:
+                continue
+            try:
+                event = json.loads(line[json_start:])
+            except json.JSONDecodeError:
+                continue
+            if predicate(event):
+                return event
+        seen_lines = len(lines)
+        time.sleep(0.1)
+
+    raise RuntimeError(
+        f"Android event timeout ({phase}, {timeout_sec:.1f}s)"
+    )
 
 def run_dry_run(args: dict) -> bool:
     """Validate classification and artifact schema without hardware."""
@@ -1651,8 +2130,15 @@ def run_dry_run(args: dict) -> bool:
                 "match": False,
                 "failure_detail": "observed != predicted",
             })
-
         writer.record_step(step)
+
+    # ── Fixed UI scenario dry-run records ─────────────────────────────────
+    # Generate deterministic UI scenario step records without hardware.
+    ui_dry_steps = _generate_fixed_ui_steps(args)
+
+    ui_cls_totals: dict[str, int] = {c: 0 for c in CLASSIFICATIONS}
+    ui_cls_totals["pass"] = len(ui_dry_steps)
+
 
     # Build summary with all required fields
     summary = {
@@ -1689,6 +2175,12 @@ def run_dry_run(args: dict) -> bool:
             "examples_generated": examples_generated,
             "seed": seed,
             "duration_sec": 0.0,
+        },
+        "ui_scenario": {
+            "status": "dry_run",
+            "steps": ui_dry_steps,
+            "classification_totals": ui_cls_totals,
+            "failing": 0,
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -1901,7 +2393,6 @@ def run_replay(args: dict) -> bool:
             }))
             return True
 
-        # Hardware replay: execute one step
         bench_path = args.get("bench_toml")
         if not bench_path:
             print(json.dumps({
@@ -1964,25 +2455,37 @@ def main(argv: list[str]) -> int:
 
     # Hardware mode
     runner = ConformanceRunner(args)
-    passed, all_steps = runner.run()
+    hypo_passed, hypo_steps = runner.run()
+    ui_steps = getattr(runner, "ui_steps", [])
 
     # Always cleanup
     runner.cleanup()
-
     # Build final summary
     duration = int(time.monotonic() - runner.start_time)
-    saw_failure = any(
-        s.get("match") is False for s in all_steps
+    saw_hypo_failure = any(
+        s.get("match") is False for s in hypo_steps
     )
-    success = passed and not saw_failure
+    hypo_success = hypo_passed and not saw_hypo_failure
+
+    saw_ui_failure = any(
+        s.get("match") is False for s in ui_steps
+    )
+    ui_success = len(ui_steps) == len(FIXED_UI_STEPS) and not saw_ui_failure
 
     hypo_settings = runner.get_hypothesis_settings(
         args.get("profile", "quick")
     )
 
+    # Count UI classifications
+    ui_cls_totals: dict[str, int] = {c: 0 for c in CLASSIFICATIONS}
+    for s in ui_steps:
+        cls = s.get("classification", "environment")
+        if cls in ui_cls_totals:
+            ui_cls_totals[cls] += 1
+
     summary = {
         "scenario": "editor_conformance",
-        "status": "pass" if success else "fail",
+        "status": "pass" if hypo_success and ui_success else "fail",
         "profile": args.get("profile", "quick"),
         "target_package": {
             "id": runner.fqdn_package_id or "readline-emacs-ascii",
@@ -1999,9 +2502,15 @@ def main(argv: list[str]) -> int:
         },
         "hypothesis": {
             "settings": hypo_settings,
-            "examples": len(all_steps),
+            "examples": len(hypo_steps),
             "seed": args.get("seed"),
             "duration_sec": duration,
+        },
+        "ui_scenario": {
+            "status": "pass" if ui_success else "fail",
+            "steps": ui_steps,
+            "classification_totals": ui_cls_totals,
+            "failing": sum(1 for s in ui_steps if s.get("match") is False),
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "log_paths": {
@@ -2016,11 +2525,14 @@ def main(argv: list[str]) -> int:
         },
     }
 
+    # Combined pass/fail for exit code: both must pass
+    all_success = hypo_success and ui_success
+
     if runner.artifacts:
         runner.artifacts.write_summary(summary)
-        status_str = "pass" if success else "fail"
+        status_str = "pass" if all_success else "fail"
         failure_detail = None
-        for s in all_steps:
+        for s in hypo_steps + ui_steps:
             if s.get("failure_detail"):
                 failure_detail = s["failure_detail"]
                 break
@@ -2028,9 +2540,11 @@ def main(argv: list[str]) -> int:
 
     print(json.dumps({
         "phase": "result",
-        "status": "pass" if success else "fail",
-        "steps": len(all_steps),
-        "failing": sum(1 for s in all_steps if s.get("match") is False),
+        "status": "pass" if all_success else "fail",
+        "hypothesis_steps": len(hypo_steps),
+        "hypothesis_failing": sum(1 for s in hypo_steps if s.get("match") is False),
+        "ui_steps": len(ui_steps),
+        "ui_failing": sum(1 for s in ui_steps if s.get("match") is False),
         "classification_totals": runner.artifacts.classification_totals
             if runner.artifacts else {},
         "duration": duration,
@@ -2038,7 +2552,7 @@ def main(argv: list[str]) -> int:
             if runner.artifacts else None,
     }))
 
-    return 0 if success else 1
+    return 0 if all_success else 1
 
 
 if __name__ == "__main__":

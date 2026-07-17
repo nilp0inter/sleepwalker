@@ -20,39 +20,86 @@ import io.sleepwalker.core.keymap.HostProfile
 import io.sleepwalker.core.text.TextPlanner
 import io.sleepwalker.core.text.TapScriptCompiler
 import io.sleepwalker.core.text.TextRenderingFailure
+import android.content.Intent
+import android.widget.RadioGroup
+import android.widget.RadioButton
+import android.widget.CheckBox
+import io.sleepwalker.app.ble.UiEditorRequest
+import io.sleepwalker.app.ble.UiEditorResult
+import io.sleepwalker.app.ble.UiEditorListener
+import io.sleepwalker.core.editor.EditorState
+import io.sleepwalker.core.editor.EditorResult
+import io.sleepwalker.core.editor.FailureClassification
 
 /**
  * Programmatic UI for the sleepwalker reference app text rendering demo.
  * Exposes connection/safety controls and streams inserted valid characters
  * through the sleepwalker-core high-level text planner.
  */
+enum class DemoTextMode { APPEND_ONLY, READLINE_EDITOR }
+
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var statusText: TextView
-    private lateinit var feedbackText: TextView
-    private lateinit var textInput: EditText
+    companion object {
+        private val generationCounter = java.util.concurrent.atomic.AtomicLong(0)
+        const val EXTRA_READLINE = "io.sleepwalker.app.EXTRA_READLINE"
+        const val EXTRA_MODE = "io.sleepwalker.app.EXTRA_MODE"
+    }
+
+    internal lateinit var statusText: TextView
+    internal lateinit var feedbackText: TextView
+    internal lateinit var textInput: EditText
     private val streamLock = Any()
     private val keymapDb by lazy { JsonKeymapDatabase(resources) }
     private val planner by lazy { TextPlanner(database = keymapDb, hid = SleepwalkerBleService.hid) }
     private var selectedProfile: HostProfile = HostProfile.LINUX_US
 
+    internal var currentMode = DemoTextMode.APPEND_ONLY
+    internal var modeLocked = false
+    internal var isResetPending = false
+    internal var editorState: EditorState = EditorState.Uninitialized
+    private var isProgrammaticClear = false
+    internal var lifecycleGeneration: Long = 0
+
+    internal lateinit var appendOnlyRadio: RadioButton
+    internal lateinit var readlineRadio: RadioButton
+    internal lateinit var modeRadioGroup: RadioGroup
+    internal lateinit var readlineInfoContainer: LinearLayout
+    internal lateinit var ackCheckBox: CheckBox
+    internal lateinit var resetBtn: Button
+
+    // ── Test seams ──
+    internal var submitRequestFn: (UiEditorRequest) -> Unit = { request ->
+        SleepwalkerBleService.submitUiEditorRequest(request)
+    }
+    internal var nextChangeIdFn: () -> Long = { SleepwalkerBleService.nextUiChangeId() }
+
+    internal fun injectUiEditorResult(request: UiEditorRequest, result: UiEditorResult) {
+        uiEditorListener.onUiEditorResult(request, result)
+    }
+
+
     private val bleListener = object : SleepwalkerBleService.Companion.StatusListener {
         override fun onStatusReceived(seqId: Int, status: Int, statusName: String) {
             runOnUiThread {
-                feedbackText.text = "Ack: $statusName (seq $seqId)"
+                if (currentMode == DemoTextMode.APPEND_ONLY) {
+                    feedbackText.text = "Ack: $statusName (seq $seqId)"
+                }
+                updateInputState()
             }
         }
 
         override fun onConnectionChanged(connected: Boolean) {
             runOnUiThread {
                 statusText.text = "Status: ${if (connected) "Connected" else "Disconnected"}"
+                updateInputState()
             }
         }
     }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         SwLog.event("ui", "on_create")
+        lifecycleGeneration = generationCounter.incrementAndGet()
 
         // Programmatic vertical LinearLayout container
         val rootLayout = LinearLayout(this).apply {
@@ -136,6 +183,95 @@ class MainActivity : AppCompatActivity() {
         }
         rootLayout.addView(statusText)
 
+        // Mode selection label
+        val modeLabel = TextView(this).apply {
+            text = "Text Semantics Mode:"
+            textSize = 18f
+            setPadding(0, 16, 0, 8)
+        }
+        rootLayout.addView(modeLabel)
+
+        // Mode RadioGroup
+        modeRadioGroup = RadioGroup(this).apply {
+            orientation = RadioGroup.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 16)
+        }
+
+        appendOnlyRadio = RadioButton(this).apply {
+            text = "Append Only"
+            id = View.generateViewId()
+        }
+        modeRadioGroup.addView(appendOnlyRadio)
+
+        readlineRadio = RadioButton(this).apply {
+            text = "Readline Editor"
+            id = View.generateViewId()
+        }
+        modeRadioGroup.addView(readlineRadio)
+
+        // By default check append only
+        appendOnlyRadio.isChecked = true
+
+        modeRadioGroup.setOnCheckedChangeListener { _, checkedId ->
+            if (checkedId == appendOnlyRadio.id) {
+                currentMode = DemoTextMode.APPEND_ONLY
+                updateUiForMode(DemoTextMode.APPEND_ONLY)
+            } else if (checkedId == readlineRadio.id) {
+                currentMode = DemoTextMode.READLINE_EDITOR
+                updateUiForMode(DemoTextMode.READLINE_EDITOR)
+            }
+        }
+        rootLayout.addView(modeRadioGroup)
+
+        // Readline Container
+        readlineInfoContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, 16, 0, 16)
+            visibility = View.GONE
+        }
+
+        val targetLabel = TextView(this).apply {
+            text = "Target: readline-emacs-ascii (GNU Readline 8.2 Emacs-mode)"
+            textSize = 14f
+            setPadding(0, 0, 0, 8)
+        }
+        readlineInfoContainer.addView(targetLabel)
+
+        val constraintsLabel = TextView(this).apply {
+            text = "Constraints: Printable ASCII, single-line."
+            textSize = 14f
+            setPadding(0, 0, 0, 8)
+        }
+        readlineInfoContainer.addView(constraintsLabel)
+
+        val resetGuidanceLabel = TextView(this).apply {
+            text = "Guidance: The physical Readline target must already be empty. This reset clears local state and does not clear or observe the physical target buffer."
+            textSize = 12f
+            setPadding(0, 0, 0, 16)
+        }
+        readlineInfoContainer.addView(resetGuidanceLabel)
+
+        ackCheckBox = CheckBox(this).apply {
+            text = "Acknowledge physical target is empty"
+            setOnCheckedChangeListener { _, isChecked ->
+                resetBtn.isEnabled = isChecked && !isResetPending
+            }
+        }
+        readlineInfoContainer.addView(ackCheckBox)
+
+        resetBtn = Button(this).apply {
+            text = "Reset Session"
+            isEnabled = false
+            setOnClickListener {
+                submitReset()
+            }
+        }
+        readlineInfoContainer.addView(resetBtn)
+
+        rootLayout.addView(readlineInfoContainer)
+
         // Text input
         textInput = EditText(this).apply {
             hint = "Type here to stream characters"
@@ -153,12 +289,17 @@ class MainActivity : AppCompatActivity() {
 
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, after: Int) {
                 val current = s?.toString() ?: ""
-                if (after > before) {
-                    val inserted = current.substring(start, start + after)
-                    SwLog.event("ui", "text_changed", fields = mapOf(
-                        "text" to current, "inserted" to inserted
-                    ))
-                    streamText(inserted)
+                if (currentMode == DemoTextMode.APPEND_ONLY) {
+                    if (after > before) {
+                        val inserted = current.substring(start, start + after)
+                        SwLog.event("ui", "text_changed", fields = mapOf(
+                            "text" to current, "inserted" to inserted
+                        ))
+                        streamText(inserted)
+                    }
+                } else {
+                    if (isProgrammaticClear) return
+                    submitSnapshot(current)
                 }
             }
 
@@ -175,9 +316,11 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(feedbackText)
 
         setContentView(rootLayout)
+        handleIntentExtras(intent)
     }
 
     private fun streamText(inserted: String) {
+        onTargetMutationAdmitted()
         if (SleepwalkerBleService.gatt == null) {
             feedbackText.text = "Error: not connected"
             return
@@ -210,15 +353,161 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    private fun onTargetMutationAdmitted() {
+        if (!modeLocked) {
+            runOnUiThread {
+                lockModeSelection()
+            }
+        }
+    }
+
+    private fun lockModeSelection() {
+        modeLocked = true
+        appendOnlyRadio.isEnabled = false
+        readlineRadio.isEnabled = false
+    }
+
+    private fun unlockModeSelection() {
+        modeLocked = false
+        appendOnlyRadio.isEnabled = true
+        readlineRadio.isEnabled = true
+    }
+
+    private fun updateUiForMode(mode: DemoTextMode) {
+        if (mode == DemoTextMode.READLINE_EDITOR) {
+            readlineInfoContainer.visibility = View.VISIBLE
+            textInput.hint = "Type here (reconciled snapshot)"
+        } else {
+            readlineInfoContainer.visibility = View.GONE
+            textInput.hint = "Type here to stream characters"
+        }
+        updateInputState()
+    }
+
+    private fun updateInputState() {
+        runOnUiThread {
+            if (currentMode == DemoTextMode.READLINE_EDITOR) {
+                val connected = SleepwalkerBleService.gatt != null && SleepwalkerBleService.rxChar != null
+                val armed = SleepwalkerBleService.safetyState == SleepwalkerBleService.Companion.SafetyState.ARMED
+                val isUnknown = editorState == EditorState.Unknown
+                textInput.isEnabled = connected && armed && !isUnknown && !isResetPending
+            } else {
+                textInput.isEnabled = true
+            }
+        }
+    }
+
+    private fun submitSnapshot(text: String) {
+        onTargetMutationAdmitted()
+        val changeId = nextChangeIdFn()
+        val req = UiEditorRequest.Snapshot(
+            id = changeId,
+            generation = lifecycleGeneration,
+            text = text
+        )
+        submitRequestFn(req)
+    }
+
+    private fun submitReset() {
+        isResetPending = true
+        resetBtn.isEnabled = false
+        updateInputState()
+        val changeId = nextChangeIdFn()
+        val req = UiEditorRequest.Reset(
+            id = changeId,
+            generation = lifecycleGeneration,
+            acknowledgedEmpty = true
+        )
+        submitRequestFn(req)
+    }
+
+    private fun handleIntentExtras(intent: Intent?) {
+        if (intent == null) return
+        val readlineExtra = intent.getBooleanExtra(EXTRA_READLINE, false) ||
+                intent.getStringExtra(EXTRA_READLINE) == "true" ||
+                intent.getStringExtra(EXTRA_MODE) == "READLINE_EDITOR"
+        if (readlineExtra) {
+            currentMode = DemoTextMode.READLINE_EDITOR
+            readlineRadio.isChecked = true
+            updateUiForMode(DemoTextMode.READLINE_EDITOR)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntentExtras(intent)
+    }
+
+    private val uiEditorListener = object : UiEditorListener {
+        override fun onUiEditorResult(request: UiEditorRequest, result: UiEditorResult) {
+            runOnUiThread {
+                if (result.generation != lifecycleGeneration) {
+                    return@runOnUiThread
+                }
+                when (result) {
+                    is UiEditorResult.Snapshot -> {
+                        val requestedText = result.text
+                        val editorResult = result.result
+                        val snapshot = result.snapshot
+                        editorState = snapshot?.state ?: editorState
+                        
+                        when (editorResult) {
+                            is EditorResult.Synced -> {
+                                val revision = snapshot?.predictedRevision ?: 0L
+                                feedbackText.text = "Synced change #$revision (id ${result.id}): '$requestedText'"
+                            }
+                            is EditorResult.EditorFailure -> {
+                                val classificationName = editorResult.classification.javaClass.simpleName
+                                val description = when (val c = editorResult.classification) {
+                                    is FailureClassification.AbiMismatch -> "ABI mismatch: expected ${c.expected}, actual ${c.actual}"
+                                    is FailureClassification.UnrepresentableContent -> "Unrepresentable character: '${c.glyph}'"
+                                    is FailureClassification.InconsistentPrediction -> "Inconsistent prediction: expected '${c.expected}', predicted '${c.predicted}'"
+                                    is FailureClassification.UnsupportedBehavior -> "Unsupported: ${c.reason}"
+                                    is FailureClassification.PlanningError -> "Planning error: ${c.reason}"
+                                    is FailureClassification.TransportFailure -> "Transport failure: ${c.reason}"
+                                    is FailureClassification.EnvironmentFailure -> "Environment failure: ${c.reason}"
+                                    else -> "Failure: $classificationName"
+                                }
+                                if (editorState == EditorState.Unknown) {
+                                    feedbackText.text = "Terminal error: $description. Target state Unknown; reset required."
+                                } else {
+                                    feedbackText.text = "Planning failure: $description"
+                                }
+                            }
+                        }
+                        updateInputState()
+                    }
+                    is UiEditorResult.Reset -> {
+                        isResetPending = false
+                        editorState = EditorState.Uninitialized
+                        isProgrammaticClear = true
+                        textInput.setText("")
+                        isProgrammaticClear = false
+                        
+                        ackCheckBox.isChecked = false
+                        feedbackText.text = "Editor session reset. Assumed empty target."
+                        
+                        unlockModeSelection()
+                        updateInputState()
+                    }
+                }
+            }
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         SleepwalkerBleService.statusListener = bleListener
+        SleepwalkerBleService.uiEditorListener = uiEditorListener
         val connected = SleepwalkerBleService.gatt != null
         statusText.text = "Status: ${if (connected) "Connected" else "Disconnected"}"
+        updateInputState()
     }
 
     override fun onStop() {
         super.onStop()
         SleepwalkerBleService.statusListener = null
+        SleepwalkerBleService.uiEditorListener = null
     }
 }

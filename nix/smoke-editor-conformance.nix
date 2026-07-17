@@ -24,6 +24,9 @@
 , sleepwalker-adb-set-text-encoded, sleepwalker-adb-reset-editor
 , sleepwalker-adb-inject-key
 , sleepwalker-adb-release-all, sleepwalker-adb-kill
+, sleepwalker-adb-launch-readline
+, sleepwalker-adb-input-text, sleepwalker-adb-keyevent
+, sleepwalker-adb-keycombination, sleepwalker-adb-dismiss-keyguard
 , sleepwalker-readline-fixture-start, sleepwalker-readline-fixture-ctl
 , python3 }:
 let
@@ -34,6 +37,9 @@ let
     sleepwalker-adb-set-text-encoded sleepwalker-adb-reset-editor
     sleepwalker-adb-inject-key
     sleepwalker-adb-release-all sleepwalker-adb-kill
+    sleepwalker-adb-launch-readline
+    sleepwalker-adb-input-text sleepwalker-adb-keyevent
+    sleepwalker-adb-keycombination sleepwalker-adb-dismiss-keyguard
     sleepwalker-readline-fixture-start sleepwalker-readline-fixture-ctl
     jq coreutils
   ];

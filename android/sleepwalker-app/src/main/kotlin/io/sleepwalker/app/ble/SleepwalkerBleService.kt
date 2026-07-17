@@ -91,6 +91,45 @@ data class EditorSnapshot(
     val lastPlanOps: Int,
     val lastClassification: String?,
 )
+sealed class UiEditorRequest {
+    abstract val id: Long
+    abstract val generation: Long
+
+    data class Snapshot(
+        override val id: Long,
+        override val generation: Long,
+        val text: String
+    ) : UiEditorRequest()
+
+    data class Reset(
+        override val id: Long,
+        override val generation: Long,
+        val acknowledgedEmpty: Boolean
+    ) : UiEditorRequest()
+}
+
+sealed class UiEditorResult {
+    abstract val id: Long
+    abstract val generation: Long
+
+    data class Snapshot(
+        override val id: Long,
+        override val generation: Long,
+        val text: String,
+        val result: io.sleepwalker.core.editor.EditorResult,
+        val snapshot: io.sleepwalker.app.ble.EditorSnapshot?
+    ) : UiEditorResult()
+
+    data class Reset(
+        override val id: Long,
+        override val generation: Long
+    ) : UiEditorResult()
+}
+
+interface UiEditorListener {
+    fun onUiEditorResult(request: UiEditorRequest, result: UiEditorResult)
+}
+
 class SleepwalkerBleService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -128,6 +167,32 @@ class SleepwalkerBleService : Service() {
 
         /** Serialization lock for [editor] operations. */
         val editorLock = Any()
+
+        // ── UI Editor FIFO Lane ──
+
+        /** Single-thread FIFO lane for UI Editor commands. */
+        val uiEditorCommandLane = UiEditorCommandLane(
+            executor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "SleepwalkerUiEditorFIFO")
+            },
+            mainHandler = handler,
+            editorLock = editorLock,
+            editorProvider = { editor },
+            snapshotProvider = { editorSnapshot() },
+            onReset = {
+                lastVerification = null
+                SwLog.event("editor", "reset_acknowledged_empty")
+            },
+        )
+
+        var uiEditorListener: UiEditorListener?
+            get() = uiEditorCommandLane.listener
+            set(value) { uiEditorCommandLane.listener = value }
+
+        fun nextUiChangeId(): Long = uiEditorCommandLane.nextUiChangeId()
+
+        fun submitUiEditorRequest(request: UiEditorRequest) = uiEditorCommandLane.submit(request)
+
 
         /** Lazy-initialized [Editor] singleton. */
         val editor: Editor by lazy {
@@ -323,8 +388,9 @@ class SleepwalkerBleService : Service() {
                     Status.KILLED -> safetyState = SafetyState.KILLED
                 }
                 handler.post {
-                    statusListener?.onStatusReceived(note.seqId, note.status, note.statusName)
+                    // Complete executor futures before UI listeners inspect Editor state.
                     executorStatusListener?.onStatusReceived(note.seqId, note.status, note.statusName)
+                    statusListener?.onStatusReceived(note.seqId, note.status, note.statusName)
                 }
             }
         }

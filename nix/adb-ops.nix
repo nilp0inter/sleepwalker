@@ -157,4 +157,36 @@ in
       exit "$RC"
     fi
   '';
+
+  # launch-readline: launch MainActivity with Readline editor mode via stable
+  # EXTRA_READLINE intent extra. Used by the fixed UI HIL scenario.
+  sleepwalker-adb-launch-readline = mkAdb "sleepwalker-adb-launch-readline" ''
+    ${adb} "''${ADB_ARGS[@]}" shell am start -n io.sleepwalker.app/.MainActivity --ez io.sleepwalker.app.EXTRA_READLINE true 2>&1
+  '';
+
+  # input-text: type text into the currently focused EditText field.
+  # Text is single-argument (simple ASCII, no spaces needed by design).
+  sleepwalker-adb-input-text = mkAdb "sleepwalker-adb-input-text" ''
+    TEXT="''${2:-}"
+    ${adb} "''${ADB_ARGS[@]}" shell input text "$TEXT" 2>&1
+  '';
+
+  # keyevent: send a key event by Android keycode (e.g. 67=DEL, 123=END).
+  sleepwalker-adb-keyevent = mkAdb "sleepwalker-adb-keyevent" ''
+    KEYCODE="''${2:-0}"
+    ${adb} "''${ADB_ARGS[@]}" shell input keyevent "$KEYCODE" 2>&1
+  '';
+
+  # keycombination: send a key combination (keycode + metastate).
+  # Used for Ctrl+A (113 29), Ctrl+C (113 31), Ctrl+V (113 50).
+  sleepwalker-adb-keycombination = mkAdb "sleepwalker-adb-keycombination" ''
+    KEYCODE="''${2:-0}"
+    META="''${3:-0}"
+    ${adb} "''${ADB_ARGS[@]}" shell input keycombination "$KEYCODE" "$META" 2>&1
+  '';
+
+  # dismiss-keyguard: dismiss the Android lock screen / keyguard.
+  sleepwalker-adb-dismiss-keyguard = mkAdb "sleepwalker-adb-dismiss-keyguard" ''
+    ${adb} "''${ADB_ARGS[@]}" shell wm dismiss-keyguard 2>&1
+  '';
 }

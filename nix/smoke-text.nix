@@ -15,7 +15,7 @@ let
     sleepwalker-bench-validate sleepwalker-fw-uart sleepwalker-adb-logcat
     sleepwalker-hid-observe sleepwalker-adb-connect sleepwalker-adb-arm
     sleepwalker-adb-type-text sleepwalker-adb-release-all sleepwalker-adb-kill
-    sleepwalker-esp-reset
+    sleepwalker-esp-reset python3
   ];
 in
 writeShellScriptBin "sleepwalker-smoke-text" ''
