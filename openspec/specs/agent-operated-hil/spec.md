@@ -184,3 +184,121 @@ The HIL text identity scenario SHALL preserve enough structured evidence to clas
 - **WHEN** a generated text identity example fails once but replaying the same example does not reproduce the failure
 - **THEN** the scenario reports an infrastructure or timing instability classification rather than presenting the example as a deterministic text identity counterexample
 
+
+### Requirement: Editor snapshot-sequence property HIL scenario
+The HIL SHALL provide a Hypothesis-driven Editor conformance scenario that generates related complete-text snapshot sequences, calls `setText` repeatedly through the Editor over the full app/library/BLE/firmware/USB path, and compares requested, predicted, and authoritative fixture state after every synchronized call. The scenario SHALL use the Readline fixture as the authoritative target and SHALL compare state per step, not only at the end of the sequence.
+
+#### Scenario: Related snapshot sequences generated
+- **WHEN** the Editor conformance scenario runs on a commissioned bench
+- **THEN** it generates related complete-text snapshot sequences using Hypothesis and invokes `setText` once per snapshot in sequence through the direct ADB Editor command path
+
+#### Scenario: Per-step state comparison
+- **WHEN** the scenario executes each `setText` call in a generated sequence
+- **THEN** it compares the requested snapshot, the Editor predicted state, and the authoritative Readline fixture snapshot after that single synchronized call before proceeding to the next snapshot
+
+#### Scenario: Full path exercised
+- **WHEN** the Editor conformance scenario runs
+- **THEN** each `setText` call traverses the ADB command path, Android companion, `sleepwalker-core` Editor, BLE transport, ESP32-S3 firmware, USB HID, and the Readline fixture on the observer host
+
+### Requirement: Synchronization barrier usage in HIL
+The HIL SHALL send the reserved symbolic HID synchronization usage `USB_KEY_F24` after each Editor reconciliation plan and SHALL wait for the Readline fixture to consume the barrier before taking an authoritative snapshot. The HIL SHALL NOT rely on fixed sleeps or evdev event absence as proof of input consumption. The barrier SHALL be consumed by the fixture itself.
+
+#### Scenario: Barrier sent before snapshot
+- **WHEN** the HIL completes an Editor reconciliation plan for a snapshot step
+- **THEN** it sends the `USB_KEY_F24` key sequence and waits for the Readline fixture to confirm consumption before taking the authoritative snapshot
+
+#### Scenario: No fixed sleep for input consumption
+- **WHEN** the HIL waits for preceding input to be consumed
+- **THEN** it waits on the fixture barrier confirmation and does not use a fixed sleep to infer consumption
+
+### Requirement: Non-grabbing observation for Editor conformance
+The HIL Editor conformance scenario SHALL NOT exclusively grab the keyboard evdev node during conformance runs. Normal HID input SHALL reach the Linux virtual terminal and the Readline fixture. A non-grabbing evdev observer MAY run only as diagnostics and SHALL NOT be used as the authoritative consumption proof for the physical-input barrier.
+
+#### Scenario: Editor conformance does not grab
+- **WHEN** the Editor conformance scenario starts observation
+- **THEN** the keyboard evdev node is not exclusively grabbed and HID input reaches the Linux virtual terminal and the Readline fixture
+
+#### Scenario: Non-grabbing evdev is diagnostics only
+- **WHEN** the Editor conformance scenario collects evdev diagnostics
+- **THEN** the evdev observer runs without exclusive grab and its output is used only as diagnostics, not as authoritative barrier consumption proof
+
+### Requirement: Per-step target-state comparison artifacts
+The HIL Editor conformance scenario SHALL write per-step comparison artifacts recording, for each snapshot in a generated sequence, the requested snapshot, the Editor predicted state, the authoritative fixture observed state, and the match outcome. The artifacts SHALL be sufficient to identify the exact step where a mismatch occurred.
+
+#### Scenario: Per-step comparison recorded
+- **WHEN** the Editor conformance scenario executes a generated sequence
+- **THEN** it records the requested snapshot, predicted state, observed fixture state, and match outcome for each step
+
+#### Scenario: Mismatch step identified
+- **WHEN** a per-step comparison detects a mismatch
+- **THEN** the artifact directory identifies the failing step index and preserves the requested, predicted, and observed states for that step
+
+### Requirement: Editor replay artifacts
+The HIL Editor conformance scenario SHALL preserve replay artifacts for every failing sequence, including the generated snapshot sequence, per-step requested and predicted and observed states, Editor plans, host ABI version, target package identity, fixture control contract version, Android diagnostics, ESP UART diagnostics, non-grabbing evdev diagnostics, and Hypothesis replay data. The artifacts SHALL be sufficient to reproduce the failing sequence without re-running Hypothesis generation.
+
+#### Scenario: Failing sequence replayable
+- **WHEN** an Editor conformance sequence fails at a given step
+- **THEN** the artifact directory preserves the full snapshot sequence, per-step states, Editor plans, ABI version, target package identity, fixture contract version, and Android diagnostics, ESP UART diagnostics, non-grabbing evdev diagnostics, and Hypothesis replay data
+- **AND** the artifacts are sufficient to reproduce the failing sequence without re-running Hypothesis generation
+
+### Requirement: Editor failure classification
+The HIL Editor conformance scenario SHALL classify failures into semantic and infrastructure classes. Semantic failures are target behavior mismatches where the Editor predicted state does not match the authoritative fixture state while the fixture is healthy. Infrastructure failures include fixture malfunction, synchronization failure, transport failure, environment failure, and non-reproducible hardware failure. Non-reproducible hardware failures SHALL be classified separately from deterministic semantic counterexamples.
+
+#### Scenario: Semantic mismatch classified
+- **WHEN** the Editor predicted state does not match the authoritative fixture state and the fixture is healthy
+- **THEN** the scenario classifies the failure as a semantic reconciliation mismatch
+
+#### Scenario: Infrastructure failure classified separately
+- **WHEN** an Editor conformance step fails due to fixture malfunction, synchronization, transport, environment, or hardware cause
+- **THEN** the scenario classifies the failure under the matching infrastructure class rather than as a semantic counterexample
+
+#### Scenario: Non-reproducible hardware failure classified separately
+- **WHEN** a failing Editor sequence does not reproduce on replay and the fixture reports intermittent behavior
+- **THEN** the scenario classifies the failure as a non-reproducible hardware or infrastructure instability rather than a semantic counterexample
+
+### Requirement: Session-scoped Editor conformance execution
+The HIL Editor conformance scenario SHALL amortize expensive bench setup across generated snapshot sequences rather than resetting, reconnecting, or rebuilding the entire bench loop for each example. The scenario SHALL reset the Readline fixture before each generated sequence and SHALL synchronize per step within the sequence.
+
+#### Scenario: Setup shared across sequences
+- **WHEN** the Editor conformance scenario starts on a commissioned bench
+- **THEN** it validates bench configuration, resets the ESP32-S3, starts captures, prepares the Readline fixture, connects BLE, and arms the firmware once before running generated sequences
+
+#### Scenario: Fixture reset before each sequence
+- **WHEN** a generated snapshot sequence begins
+- **THEN** the HIL resets the Readline fixture to empty known state before sending the first `setText` of that sequence
+
+### Requirement: Existing text identity scenario preserved
+The existing property-based text identity HIL scenario SHALL remain available and unchanged after adding Editor conformance. The append-only text identity scenario and the Editor conformance scenario SHALL coexist as separate HIL surfaces.
+
+#### Scenario: Text identity scenario still passes
+- **WHEN** Editor conformance support is present
+- **THEN** the existing text identity property scenario still runs and reports generated text identity evidence unchanged
+
+
+### Requirement: Explicit Editor F24 conformance policy
+The Editor conformance HIL SHALL configure F24 reservation explicitly for the conformance run. Under that policy, the conformance Editor plan compiler SHALL reject symbolic F24 actions from the package so the separately injected physical F24 synchronization barrier remains authoritative; the policy SHALL be recorded in artifacts.
+
+#### Scenario: Conformance plan reserves F24
+- **WHEN** a conformance-run package plan contains a symbolic F24 action
+- **THEN** the compiler rejects the plan before execution and the artifact records that F24 reservation policy was active
+
+### Requirement: Conformance barrier remains fixture-authoritative
+After each successfully completed Editor plan in a conformance run, HIL SHALL inject the physical F24 barrier using the existing low-level keyboard path and wait for the fixture to acknowledge consumption before obtaining the authoritative rendered-text snapshot. HIL SHALL not infer consumption from fixed delays or from event absence.
+
+#### Scenario: Barrier precedes authoritative snapshot
+- **WHEN** a conformance Editor request completes execution
+- **THEN** HIL waits for fixture acknowledgement of the separately injected F24 barrier before recording the authoritative snapshot
+
+### Requirement: ABI conformance and replay artifacts
+Editor conformance artifacts SHALL preserve, for every request, current and desired rendered text, opaque input and output state, symbolic actions, compiled low-level operations, package identity, host ABI version, keyboard-layout identity, text-cost metric identity, F24 reservation policy, execution outcome, and authoritative fixture result. Failing sequences SHALL additionally preserve sequence ordering and replay data sufficient to rerun the same ABI inputs without regenerating them.
+
+#### Scenario: Failing ABI sequence is replayable
+- **WHEN** an Editor conformance sequence fails
+- **THEN** its artifacts identify the failing request and preserve its opaque state values, symbolic actions, compiled operations, package/ABI identity, layout/metric identities, policy, fixture result, and replay sequence data
+
+### Requirement: Conformance validates rendered text without decoding state
+The HIL conformance oracle SHALL compare requested and authoritative rendered text and may retain opaque package-state values for replay, but SHALL not decode or assert caret, cursor, selection, mode, or any target-specific field within opaque state.
+
+#### Scenario: Opaque state remains opaque to HIL
+- **WHEN** a conformance artifact contains a package state value
+- **THEN** HIL records and replays the value as constrained opaque data while determining pass or failure from rendered-text and execution evidence rather than named editor-state fields

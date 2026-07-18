@@ -50,7 +50,7 @@ Python protocol helpers, Kotlin protocol helpers, and firmware C constants SHALL
 - **THEN** every implementation observes the same opcode, payload bytes, and CRC result
 
 ### Requirement: Expanded symbolic keyboard usage registry
-The shared protocol support libraries SHALL define symbolic USB keyboard usages required by the seed US QWERTY text planner, including letters, digits, selected controls, Shift, and punctuation key positions.
+The shared protocol support libraries SHALL define symbolic USB keyboard usages required by the seed US QWERTY text planner, including letters, digits, selected controls, Shift, punctuation key positions, and the canonical `USB_KEY_F24` usage. `USB_KEY_F24` SHALL retain its canonical USB HID keyboard usage value and SHALL be available for fixture synchronization and for Editor plans when the applicable execution policy does not reserve it.
 
 #### Scenario: Letter and digit usages available
 - **WHEN** Kotlin or Python code requests symbolic usages for `USB_KEY_A` and `USB_KEY_1`
@@ -60,6 +60,9 @@ The shared protocol support libraries SHALL define symbolic USB keyboard usages 
 - **WHEN** the text planner needs a Shift modifier key operation
 - **THEN** the registry resolves `USB_KEY_LEFTSHIFT` to the canonical USB HID modifier usage representation used by the low-level keyboard API
 
+#### Scenario: F24 usage is canonical and policy-neutral
+- **WHEN** Kotlin or Python code requests `USB_KEY_F24`
+- **THEN** both registries resolve the same canonical USB HID keyboard usage value and the registry itself does not prohibit an Editor plan from using it
 ### Requirement: Cross-language seed usage parity
 Python protocol helpers and Kotlin protocol helpers SHALL agree on the symbolic names and USB usage values required by the seed US QWERTY text planner.
 
@@ -73,3 +76,40 @@ The protocol SHALL define a keyboard tap script opcode `KEYBOARD_TAP_SCRIPT` (0x
 #### Scenario: Tap script frame accepted
 - **WHEN** a frame contains a supported version, valid CRC, opcode `KEYBOARD_TAP_SCRIPT`, and a payload with a valid count and matching number of 2-byte records
 - **THEN** protocol decoders accept the frame and expose the raw payload to callers
+
+### Requirement: Symbolic synchronization keyboard usage
+The shared protocol support libraries SHALL define a reserved symbolic USB keyboard usage `USB_KEY_F24` for target-fixture synchronization. The usage SHALL be the only new symbolic keyboard usage added by this change and SHALL be reserved so target fixtures can prove that all preceding physical input was consumed before an authoritative snapshot is taken, without relying on fixed sleeps. The usage SHALL be distinct from all existing symbolic keyboard usages and SHALL NOT be used for text rendering.
+
+#### Scenario: Synchronization usage available
+- **WHEN** Kotlin or Python code requests the symbolic usage `USB_KEY_F24`
+- **THEN** the registry resolves it to a canonical reserved USB HID keyboard usage value distinct from all text-rendering usages
+
+#### Scenario: Synchronization usage not used for text
+- **WHEN** the text planner or Editor plans printable text or reconciliation plans
+- **THEN** the `USB_KEY_F24` usage is never emitted as part of a text rendering or reconciliation plan
+
+### Requirement: Synchronization usage registry parity and raw firmware acceptance
+The Python and Kotlin shared protocol support libraries SHALL resolve `USB_KEY_F24` to the same canonical USB HID usage value. Firmware SHALL remain symbolic-usage-unaware: it SHALL accept that raw usage through the existing generic keyboard opcode path and emit the corresponding USB HID report without a new symbolic registry, opcode, frame layout, or dispatch branch.
+
+#### Scenario: Registry parity and raw firmware path checked
+- **WHEN** protocol tests inspect `USB_KEY_F24` in Python and Kotlin and send its canonical raw value through firmware's existing keyboard-tap path
+- **THEN** the Python and Kotlin symbolic names resolve to the same USB HID usage value and firmware emits the corresponding USB HID report without target-specific behavior
+
+#### Scenario: Synchronization key observed by fixture
+- **WHEN** the ESP32-S3 emits the `USB_KEY_F24` key-down and key-up sequence
+- **THEN** the target fixture observes the synchronization key and confirms all preceding physical input has been consumed before taking an authoritative snapshot
+
+
+### Requirement: Conditional F24 execution reservation
+F24 reservation SHALL be an explicit Editor execution-policy decision, not an unconditional shared-protocol or production-Editor-plan prohibition. A policy that reserves F24 SHALL reject it before execution; absent such a policy, the Editor compiler SHALL accept a structurally valid symbolic F24 action and MAY emit it through the ordinary keyboard path when selected by a package plan. Reservation policy SHALL not alter F24's canonical usage value or wire encoding.
+
+#### Scenario: Reserved policy rejects F24
+- **WHEN** an Editor compiler is configured with F24 reservation and receives a symbolic F24 action
+- **THEN** it rejects the action before sending a low-level keyboard operation
+
+### Requirement: Unchanged firmware and wire path for F24
+Firmware SHALL remain unaware of symbolic usage names and execution policies. F24 and every other validated keyboard usage SHALL traverse the existing generic raw keyboard opcode, frame format, dispatch path, and USB HID report path; this change SHALL introduce no F24-specific firmware opcode, wire field, protocol version, or dispatch branch.
+
+#### Scenario: Raw F24 path remains generic
+- **WHEN** the host sends the canonical raw F24 usage through the existing keyboard operation path
+- **THEN** firmware processes it through the generic keyboard dispatch and emits the corresponding USB HID report without F24-specific protocol behavior
