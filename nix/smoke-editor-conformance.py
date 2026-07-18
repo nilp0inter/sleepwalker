@@ -93,32 +93,33 @@ FIXED_UI_STEPS: list[tuple[str, str, list[tuple]]] = [
 
 
 def _generate_fixed_ui_steps(args: dict) -> list[dict]:
-    """Generate deterministic fixed UI step records without hardware.
-
-    Used by dry-run mode and tests. Args dict supports:
-      - out_dir  : ignored, kept for future use
-      - classify : if set, injects that classification into every step
-                   (used for testing classification propagation)
-
-    Returns a list of step dicts matching the UI step record schema.
-    """
+    """Generate deterministic fixed UI step records without hardware."""
     classify = args.get("classify")
     steps: list[dict] = []
     for seq, (step_type, expected_text, _adb_ops) in enumerate(FIXED_UI_STEPS, 1):
+        prev_text = FIXED_UI_STEPS[seq - 2][1] if seq > 1 else ""
         step: dict = {
             "seq": seq,
             "step_type": step_type,
+            "current_text": prev_text,
             "desired_text": expected_text,
-            "change_id": seq,
-            "generation": 1,
-            "editor_state": None,
-            "completion_classification": None,  # Synced
+            "opaque_input_state": {},
+            "opaque_output_state": {},
+            "symbolic_actions": [],
+            "compiled_operations": [],
+            "package_id": "readline-emacs-ascii",
+            "package_version": "1.0.0",
+            "package_source_hash": "mock-hash",
+            "host_abi": 1,
+            "layout_id": "us",
+            "cost_metric_id": "low-level-ops",
+            "policy_id": "CONFORMANCE",
+            "transaction_outcome": "COMMITTED",
+            "fixture_result": {"buffer": expected_text, "contract_version": 1},
+            "barrier_consumed": True,
             "match": True,
             "classification": "pass",
             "failure_detail": None,
-            "barrier_consumed": True,
-            "observed": {"buffer": expected_text, "point": len(expected_text)},
-            "predicted": {"buffer": expected_text, "point": len(expected_text)},
             "duration_sec": 0.001,
         }
         if classify and classify != "pass":
@@ -128,8 +129,8 @@ def _generate_fixed_ui_steps(args: dict) -> list[dict]:
             if classify == "completion_timeout":
                 step["failure_detail"] = "completion event not received within timeout"
             elif classify == "semantic":
-                step["observed"] = {"buffer": "hxllo", "point": 2}
-                step["failure_detail"] = "observed != predicted"
+                step["fixture_result"] = {"buffer": "hxllo", "contract_version": 1}
+                step["failure_detail"] = "observed != desired"
             elif classify == "sync":
                 step["failure_detail"] = "F24 barrier not consumed"
             elif classify == "planning":
@@ -152,11 +153,25 @@ class EditorDiagnostic:
     """Machine-readable Editor response parsed from ADB broadcast output."""
 
     __slots__ = (
-        "seq", "ok", "failure", "failure_class",
-        "package_id", "package_version", "host_abi",
-        "decoded_len", "lcp", "old_mid", "new_mid",
-        "plan_ops", "predicted_buffer", "predicted_point",
-        "predicted_revision", "transport_status",
+        "seq",
+        "ok",
+        "failure",
+        "failure_class",
+        "current_text",
+        "desired_text",
+        "opaque_input_state",
+        "opaque_output_state",
+        "symbolic_actions",
+        "compiled_operations",
+        "package_id",
+        "package_version",
+        "package_source_hash",
+        "host_abi",
+        "layout_id",
+        "cost_metric_id",
+        "policy_id",
+        "transaction_outcome",
+        "transport_status",
     )
 
     def __init__(self, raw: dict[str, Any]):
@@ -165,22 +180,22 @@ class EditorDiagnostic:
         self.failure: Optional[str] = raw.get("failure")
         self.failure_class: Optional[str] = raw.get("failure_class")
 
-        pkg = raw.get("package", {}) or {}
-        self.package_id: Optional[str] = pkg.get("id")
-        self.package_version: Optional[str] = pkg.get("version")
-        self.host_abi: Optional[int] = pkg.get("host_abi")
+        self.current_text: Optional[str] = raw.get("current_text")
+        self.desired_text: Optional[str] = raw.get("desired_text")
+        self.opaque_input_state: Any = raw.get("opaque_input_state")
+        self.opaque_output_state: Any = raw.get("opaque_output_state")
+        self.symbolic_actions: list[dict] = raw.get("symbolic_actions", [])
+        self.compiled_operations: list[str] = raw.get("compiled_operations", [])
 
-        self.decoded_len: int = raw.get("decoded_len", 0)
-        self.lcp: int = raw.get("lcp", 0)
-        self.old_mid: str = raw.get("old_mid", "")
-        self.new_mid: str = raw.get("new_mid", "")
-        self.plan_ops: list[str] = raw.get("plan_ops", [])
+        self.package_id: Optional[str] = raw.get("package_id")
+        self.package_version: Optional[str] = raw.get("package_version")
+        self.package_source_hash: Optional[str] = raw.get("package_source_hash")
+        self.host_abi: Optional[int] = raw.get("host_abi")
 
-        pred = raw.get("predicted") or {}
-        self.predicted_buffer: Optional[str] = pred.get("buffer")
-        self.predicted_point: Optional[int] = pred.get("point")
-        self.predicted_revision: Optional[int] = pred.get("revision")
-
+        self.layout_id: Optional[str] = raw.get("layout_id")
+        self.cost_metric_id: Optional[str] = raw.get("cost_metric_id")
+        self.policy_id: Optional[str] = raw.get("policy_id")
+        self.transaction_outcome: Optional[str] = raw.get("transaction_outcome")
         self.transport_status: Optional[str] = raw.get("transport_status")
 
     def is_planning_failure(self) -> bool:
@@ -189,7 +204,7 @@ class EditorDiagnostic:
         if self.failure_class == "transport":
             return False
         # Heuristic: planning failures have a failure reason but no plan ops
-        return self.failure is not None and not self.plan_ops
+        return self.failure is not None and not self.compiled_operations
 
     def is_transport_failure(self) -> bool:
         return (
@@ -264,17 +279,20 @@ class EditorDiagnostic:
             "ok": self.ok,
             "failure": self.failure,
             "failure_class": self.failure_class,
+            "current_text": self.current_text,
+            "desired_text": self.desired_text,
+            "opaque_input_state": self.opaque_input_state,
+            "opaque_output_state": self.opaque_output_state,
+            "symbolic_actions": self.symbolic_actions,
+            "compiled_operations": self.compiled_operations,
             "package_id": self.package_id,
             "package_version": self.package_version,
+            "package_source_hash": self.package_source_hash,
             "host_abi": self.host_abi,
-            "decoded_len": self.decoded_len,
-            "lcp": self.lcp,
-            "old_mid": self.old_mid,
-            "new_mid": self.new_mid,
-            "plan_ops": self.plan_ops,
-            "predicted_buffer": self.predicted_buffer,
-            "predicted_point": self.predicted_point,
-            "predicted_revision": self.predicted_revision,
+            "layout_id": self.layout_id,
+            "cost_metric_id": self.cost_metric_id,
+            "policy_id": self.policy_id,
+            "transaction_outcome": self.transaction_outcome,
             "transport_status": self.transport_status,
         }
 
@@ -307,7 +325,7 @@ class FixtureResponse:
 
 @st.composite
 def snapshot_sequences(draw, max_len=20, max_steps=5):
-    """Generate related complete-text sequences using LCP/LCS-friendly transforms.
+    """Generate related complete-text sequences using common-affix transforms.
 
     Yields lists of strings where each element is derived from the previous
     via append, insert-middle, replace-middle, delete-prefix/suffix/middle,
@@ -634,12 +652,21 @@ def fixture_shutdown(ssh_target: str, identity: str = "",
 
 # ── ADB Helpers ──────────────────────────────────────────────────────────────
 
-def adb_set_text_encoded(serial: str, text: str, seq: int) -> EditorDiagnostic:
+def adb_set_text_encoded(
+    serial: str,
+    text: str,
+    seq: int,
+    opaque_input_state_encoded: str = "",
+    current_text_encoded: str = "",
+) -> EditorDiagnostic:
     """Send set-text via ADB and return parsed Editor diagnostic."""
     encoded = base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii")
-    res = run_cmd([
-        "sleepwalker-adb-set-text-encoded", serial, encoded, str(seq),
-    ])
+    cmd = ["sleepwalker-adb-set-text-encoded", serial, encoded, str(seq)]
+    if opaque_input_state_encoded or current_text_encoded:
+        cmd.append(opaque_input_state_encoded or "")
+    if current_text_encoded:
+        cmd.append(current_text_encoded)
+    res = run_cmd(cmd)
     return EditorDiagnostic.from_adb_response(res.stdout.strip())
 
 
@@ -653,9 +680,10 @@ def adb_arm(serial: str, seq: int) -> None:
     run_cmd(["sleepwalker-adb-arm", serial, str(seq)])
 
 
-def adb_reset_editor(serial: str, seq: int) -> None:
+def adb_reset_editor(serial: str, seq: int) -> EditorDiagnostic:
     """Reset the app Editor to empty known state without emitting HID."""
-    run_cmd(["sleepwalker-adb-reset-editor", serial, str(seq)])
+    res = run_cmd(["sleepwalker-adb-reset-editor", serial, str(seq)])
+    return EditorDiagnostic.from_adb_response(res.stdout.strip())
 
 
 def adb_inject_f24(serial: str, seq: int) -> None:
@@ -750,13 +778,21 @@ class ArtifactWriter:
         if step.get("match") is False:
             replay_data = {
                 "seq": step.get("seq"),
-                "desired": step.get("desired"),
-                "lcp": step.get("lcp"),
-                "old_mid": step.get("old_mid"),
-                "new_mid": step.get("new_mid"),
-                "plan_ops": step.get("plan_ops"),
-                "predicted": step.get("predicted"),
-                "observed": step.get("observed"),
+                "current_text": step.get("current_text"),
+                "desired_text": step.get("desired_text"),
+                "opaque_input_state": step.get("opaque_input_state"),
+                "opaque_output_state": step.get("opaque_output_state"),
+                "symbolic_actions": step.get("symbolic_actions"),
+                "compiled_operations": step.get("compiled_operations"),
+                "package_id": step.get("package_id"),
+                "package_version": step.get("package_version"),
+                "package_source_hash": step.get("package_source_hash"),
+                "host_abi": step.get("host_abi"),
+                "layout_id": step.get("layout_id"),
+                "cost_metric_id": step.get("cost_metric_id"),
+                "policy_id": step.get("policy_id"),
+                "transaction_outcome": step.get("transaction_outcome"),
+                "fixture_result": step.get("fixture_result"),
                 "classification": cls,
                 "barrier_consumed": step.get("barrier_consumed", False),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -765,16 +801,15 @@ class ArtifactWriter:
             step_dir.mkdir(exist_ok=True)
             with open(step_dir / "replay.json", "w") as f:
                 json.dump(replay_data, f, indent=2)
-            desired = step.get("desired", "")
+            desired = step.get("desired_text") or ""
             with open(step_dir / "desired.txt", "w") as f:
                 f.write(desired)
-            pred = step.get("predicted", {}) or {}
-            with open(step_dir / "predicted.txt", "w") as f:
-                f.write(pred.get("buffer", ""))
-            obs = step.get("observed", {}) or {}
+            curr = step.get("current_text") or ""
+            with open(step_dir / "current.txt", "w") as f:
+                f.write(curr)
+            obs = step.get("fixture_result") or {}
             with open(step_dir / "observed.txt", "w") as f:
                 f.write(obs.get("buffer", ""))
-
     def write_summary(self, summary: dict) -> None:
         summary["per_step"] = self.steps
         summary["classification_totals"] = dict(self.classification_totals)
@@ -804,22 +839,18 @@ class ArtifactWriter:
         self,
         full_sequence: list[str],
         failing_prefix: list[str],
+        ordered_steps: list[dict],
         seed: Optional[int],
         profile: str,
         max_len: int,
         max_steps: int,
         hypothesis_failure: Optional[str],
     ) -> None:
-        """Persist full shrunk sequence/prefix, seed and replay context.
-
-        Writes a replay_context.json containing the full Hypothesis-generated
-        sequence, the failing prefix (for single-step replay), the seed, and
-        the generation parameters. Also writes sequence.txt and prefix.txt
-        for human-readable recovery.
-        """
+        """Persist full shrunk sequence/prefix, seed and replay context."""
         replay_context = {
             "full_sequence": full_sequence,
             "failing_prefix": failing_prefix,
+            "ordered_steps": ordered_steps,
             "seed": seed,
             "profile": profile,
             "max_len": max_len,
@@ -860,7 +891,15 @@ class ConformanceRunner:
         self.seq_counter: int = 0
         self.fqdn_package_id: Optional[str] = None
         self.fqdn_package_version: Optional[str] = None
+        self.fqdn_package_source_hash: Optional[str] = None
         self.fqdn_host_abi: Optional[int] = None
+        self.session_package_id: Optional[str] = None
+        self.session_package_version: Optional[str] = None
+        self.session_package_source_hash: Optional[str] = None
+        self.session_host_abi: Optional[int] = None
+        self.session_layout_id: Optional[str] = None
+        self.session_cost_metric_id: Optional[str] = None
+        self.session_policy_id: Optional[str] = None
         self.fixture_identity: Optional[dict] = None
         self.fixture_control_abi: Optional[int] = None
         self.fixture_health_status: Optional[dict] = None
@@ -1112,6 +1151,30 @@ class ConformanceRunner:
                 "ble_arm",
             )
 
+            # Reset editor to verify state and get F24 reservation policy (Task 9.4)
+            print(json.dumps({"phase": "check_f24_policy"}))
+            reset_diag = adb_reset_editor(self.android_serial, self.next_seq())
+            # Save identities
+            self.session_package_id = reset_diag.package_id
+            self.session_package_version = reset_diag.package_version
+            self.session_package_source_hash = reset_diag.package_source_hash
+            self.session_host_abi = reset_diag.host_abi
+            self.session_layout_id = reset_diag.layout_id
+            self.session_cost_metric_id = reset_diag.cost_metric_id
+            self.session_policy_id = reset_diag.policy_id
+
+            print(json.dumps({
+                "phase": "check_f24_policy",
+                "policy_id": self.session_policy_id,
+                "package_id": self.session_package_id,
+                "host_abi": self.session_host_abi,
+            }))
+
+            if self.session_policy_id != "CONFORMANCE":
+                raise RuntimeError(
+                    f"Soundness check failed: F24 reservation policy is {self.session_policy_id or 'missing'}, expected CONFORMANCE"
+                )
+
             print(json.dumps({"phase": "session_setup", "status": "complete"}))
             return True
 
@@ -1163,25 +1226,40 @@ class ConformanceRunner:
 
     # ── Single Step Execution ────────────────────────────────────────────
 
-    def execute_step(self, seq: int, desired: str,
-                     timeout_mult: float = 1.0) -> dict:
+    def execute_step(
+        self,
+        seq: int,
+        desired: str,
+        timeout_mult: float = 1.0,
+        opaque_input_state_encoded: str = "",
+        current_text_encoded: str = "",
+    ) -> dict:
         """Execute one Editor step: setText + F24 + barrier + snapshot + compare.
 
         Returns a step record dict.
         """
         step: dict = {
             "seq": seq,
-            "desired": desired,
-            "lcp": None,
-            "old_mid": None,
-            "new_mid": None,
-            "plan_ops": None,
-            "predicted": None,
-            "observed": None,
+            "current_text": None,
+            "desired_text": desired,
+            "opaque_input_state": None,
+            "opaque_output_state": None,
+            "symbolic_actions": None,
+            "compiled_operations": None,
+            "package_id": None,
+            "package_version": None,
+            "package_source_hash": None,
+            "host_abi": None,
+            "layout_id": None,
+            "cost_metric_id": None,
+            "policy_id": None,
+            "transaction_outcome": None,
+            "fixture_result": None,
             "barrier_consumed": False,
             "match": None,
             "classification": None,
             "failure_detail": None,
+            "duration_sec": 0.0,
         }
 
         start = time.monotonic()
@@ -1189,28 +1267,37 @@ class ConformanceRunner:
         try:
             # A. Send setText via ADB
             diagnostic = adb_set_text_encoded(
-                self.android_serial, desired, seq
+                self.android_serial,
+                desired,
+                seq,
+                opaque_input_state_encoded=opaque_input_state_encoded,
+                current_text_encoded=current_text_encoded,
             )
 
             if diagnostic.package_id is not None:
                 self.fqdn_package_id = diagnostic.package_id
             if diagnostic.package_version is not None:
                 self.fqdn_package_version = diagnostic.package_version
+            if diagnostic.package_source_hash is not None:
+                self.fqdn_package_source_hash = diagnostic.package_source_hash
             if diagnostic.host_abi is not None:
                 self.fqdn_host_abi = diagnostic.host_abi
 
             step.update({
-                "lcp": diagnostic.lcp,
-                "old_mid": diagnostic.old_mid,
-                "new_mid": diagnostic.new_mid,
-                "plan_ops": diagnostic.plan_ops,
+                "current_text": diagnostic.current_text,
+                "opaque_input_state": diagnostic.opaque_input_state,
+                "opaque_output_state": diagnostic.opaque_output_state,
+                "symbolic_actions": diagnostic.symbolic_actions,
+                "compiled_operations": diagnostic.compiled_operations,
+                "package_id": diagnostic.package_id,
+                "package_version": diagnostic.package_version,
+                "package_source_hash": diagnostic.package_source_hash,
+                "host_abi": diagnostic.host_abi,
+                "layout_id": diagnostic.layout_id,
+                "cost_metric_id": diagnostic.cost_metric_id,
+                "policy_id": diagnostic.policy_id,
+                "transaction_outcome": diagnostic.transaction_outcome,
             })
-            if diagnostic.predicted_buffer is not None:
-                step["predicted"] = {
-                    "buffer": diagnostic.predicted_buffer,
-                    "point": diagnostic.predicted_point,
-                    "revision": diagnostic.predicted_revision,
-                }
 
             if diagnostic.ok and diagnostic.transport_status:
                 step["transport_status"] = diagnostic.transport_status
@@ -1219,9 +1306,7 @@ class ConformanceRunner:
             # If no valid diagnostic was received, the ADB/transport layer
             # failed before the Editor ran — classify as transport (parse
             # errors) or environment (no diagnostic at all).
-            if diagnostic.transport_status in (
-                "parse_error", "no_diagnostic"
-            ):
+            if diagnostic.transport_status in ("parse_error", "no_diagnostic"):
                 step["classification"] = "transport"
                 step["match"] = False
                 step["failure_detail"] = (
@@ -1258,8 +1343,10 @@ class ConformanceRunner:
             # F. Wait for fixture to consume F24 barrier
             barrier_timeout = 10.0 * timeout_mult
             barrier_ok = fixture_await_barrier(
-                self.observer_target, self.observer_identity,
-                self.known_hosts, barrier_timeout,
+                self.observer_target,
+                self.observer_identity,
+                self.known_hosts,
+                barrier_timeout,
             )
             step["barrier_consumed"] = barrier_ok
 
@@ -1275,11 +1362,7 @@ class ConformanceRunner:
             snap = fixture_snapshot(
                 self.observer_target, self.observer_identity, self.known_hosts
             )
-            step["observed"] = {
-                "buffer": snap.get("buffer", ""),
-                "point": snap.get("point"),
-                "contract_version": snap.get("contract_version"),
-            }
+            step["fixture_result"] = snap
 
             if self.artifacts:
                 self.artifacts.write_fixture_snapshot({
@@ -1289,62 +1372,21 @@ class ConformanceRunner:
                     "timestamp": time.monotonic(),
                 })
 
-            # H. Compare buffers AND points
-            observed_buffer = step["observed"]["buffer"]
-            observed_point = step["observed"]["point"]
-            predicted_buffer = (
-                diagnostic.predicted_buffer if diagnostic.predicted_buffer
-                else desired
-            )
-            predicted_point = diagnostic.predicted_point
-            # If the Editor didn't predict a point, expect end-of-buffer
-            if predicted_point is None:
-                predicted_point = len(predicted_buffer)
+            # H. Compare buffers
+            observed_buffer = snap.get("buffer", "")
+            buffer_match = observed_buffer == desired
 
-            buffer_match = observed_buffer == predicted_buffer
-            point_match = observed_point == predicted_point
-
-            # Semantic match: observed == predicted == desired, point matches
-            if buffer_match and point_match and predicted_buffer == desired:
-                # Passing steps are not classified as semantic failures.
-                # Use "pass" so classification_totals don't inflate the
-                # semantic failure bucket.
+            # Keep pass/fail oracle exclusively desired versus authoritative rendered text; never decode opaque editor fields.
+            if buffer_match:
                 step["classification"] = "pass"
                 step["match"] = True
-            elif buffer_match and point_match:
-                # predicted == observed but both != desired
-                step["classification"] = "semantic"
-                step["match"] = False
-                step["failure_detail"] = (
-                    f"predicted==observed but != desired: "
-                    f"desired={repr(desired)}, "
-                    f"predicted={repr(predicted_buffer)}, "
-                    f"observed={repr(observed_buffer)}, "
-                    f"predicted_point={predicted_point}, "
-                    f"observed_point={observed_point}"
-                )
-            elif not buffer_match:
-                step["classification"] = "semantic"
-                step["match"] = False
-                step["failure_detail"] = (
-                    f"observed != predicted: "
-                    f"desired={repr(desired)}, "
-                    f"predicted={repr(predicted_buffer)}, "
-                    f"observed={repr(observed_buffer)}, "
-                    f"predicted_point={predicted_point}, "
-                    f"observed_point={observed_point}"
-                )
             else:
-                # Buffer matches but point doesn't
                 step["classification"] = "semantic"
                 step["match"] = False
                 step["failure_detail"] = (
-                    f"observed_point != predicted_point: "
+                    f"observed != desired: "
                     f"desired={repr(desired)}, "
-                    f"predicted={repr(predicted_buffer)}, "
-                    f"observed={repr(observed_buffer)}, "
-                    f"predicted_point={predicted_point}, "
-                    f"observed_point={observed_point}"
+                    f"observed={repr(observed_buffer)}"
                 )
 
         except subprocess.CalledProcessError as e:
@@ -1477,11 +1519,14 @@ class ConformanceRunner:
                 if not self.setup_sequence():
                     raise RuntimeError("fixture sequence reset failed")
 
+                sequence_steps = []
+
                 for i, desired in enumerate(seq):
                     step = self.execute_step(
                         self.next_seq(), desired, timeout_mult,
                     )
                     all_steps.append(step)
+                    sequence_steps.append(step)
 
                     # Record step in artifacts
                     if self.artifacts:
@@ -1494,6 +1539,7 @@ class ConformanceRunner:
                         # Capture the failing prefix (all steps up to and
                         # including the failing one) for replay persistence
                         failing_prefix = list(seq[:i + 1])
+                        self.failing_steps = list(sequence_steps)
                         raise AssertionError(
                             f"step {step['seq']} failed: "
                             f"classification={cls}, {detail}"
@@ -1550,6 +1596,7 @@ class ConformanceRunner:
             self.artifacts.write_replay_context(
                 full_sequence=current_sequence,
                 failing_prefix=failing_prefix,
+                ordered_steps=self.failing_steps,
                 seed=actual_seed,
                 profile=profile,
                 max_len=max_len,
@@ -1610,9 +1657,27 @@ class ConformanceRunner:
                 return
 
             replay_ok = True
-            for i, desired in enumerate(failing_prefix):
+            for i, step_entry in enumerate(self.failing_steps):
+                desired = step_entry["desired_text"]
+                opaque_input_state = step_entry.get("opaque_input_state")
+                opaque_input_state_encoded = ""
+                if opaque_input_state is not None:
+                    opaque_json = json.dumps(opaque_input_state)
+                    opaque_input_state_encoded = base64.urlsafe_b64encode(
+                        opaque_json.encode("utf-8")
+                    ).decode("utf-8")
+
+                current_text = step_entry.get("current_text")
+                current_text_encoded = ""
+                if current_text is not None:
+                    current_text_encoded = base64.urlsafe_b64encode(
+                        current_text.encode("utf-8")
+                    ).decode("utf-8")
+
                 replay_step = self.execute_step(
                     self.next_seq(), desired, timeout_mult,
+                    opaque_input_state_encoded=opaque_input_state_encoded,
+                    current_text_encoded=current_text_encoded,
                 )
                 if replay_step.get("match") is False:
                     replay_ok = False
@@ -1711,17 +1776,25 @@ def run_fixed_ui_scenario(
         err_step: dict = {
             "seq": -1,
             "step_type": "setup",
+            "current_text": None,
             "desired_text": "",
-            "change_id": None,
-            "generation": None,
-            "editor_state": None,
-            "completion_classification": "environment",
+            "opaque_input_state": None,
+            "opaque_output_state": None,
+            "symbolic_actions": None,
+            "compiled_operations": None,
+            "package_id": None,
+            "package_version": None,
+            "package_source_hash": None,
+            "host_abi": None,
+            "layout_id": None,
+            "cost_metric_id": None,
+            "policy_id": None,
+            "transaction_outcome": None,
+            "fixture_result": None,
+            "barrier_consumed": False,
             "match": False,
             "classification": "fixture",
             "failure_detail": f"UI scenario setup failed: {e}",
-            "barrier_consumed": False,
-            "observed": None,
-            "predicted": None,
             "duration_sec": 0.0,
         }
         steps.append(err_step)
@@ -1741,17 +1814,25 @@ def run_fixed_ui_scenario(
         err_step = {
             "seq": -1,
             "step_type": "wake",
+            "current_text": None,
             "desired_text": "",
-            "change_id": None,
-            "generation": None,
-            "editor_state": None,
-            "completion_classification": "environment",
+            "opaque_input_state": None,
+            "opaque_output_state": None,
+            "symbolic_actions": None,
+            "compiled_operations": None,
+            "package_id": None,
+            "package_version": None,
+            "package_source_hash": None,
+            "host_abi": None,
+            "layout_id": None,
+            "cost_metric_id": None,
+            "policy_id": None,
+            "transaction_outcome": None,
+            "fixture_result": None,
+            "barrier_consumed": False,
             "match": False,
             "classification": "environment",
             "failure_detail": f"wake/launch failed: {e}",
-            "barrier_consumed": False,
-            "observed": None,
-            "predicted": None,
             "duration_sec": 0.0,
         }
         steps.append(err_step)
@@ -1765,17 +1846,25 @@ def run_fixed_ui_scenario(
         step = {
             "seq": seq_counter,
             "step_type": step_type,
+            "current_text": None,
             "desired_text": expected_text,
-            "change_id": None,
-            "generation": None,
-            "editor_state": None,
-            "completion_classification": None,
+            "opaque_input_state": None,
+            "opaque_output_state": None,
+            "symbolic_actions": None,
+            "compiled_operations": None,
+            "package_id": None,
+            "package_version": None,
+            "package_source_hash": None,
+            "host_abi": None,
+            "layout_id": None,
+            "cost_metric_id": None,
+            "policy_id": None,
+            "transaction_outcome": None,
+            "fixture_result": None,
+            "barrier_consumed": False,
             "match": None,
             "classification": None,
             "failure_detail": None,
-            "barrier_consumed": False,
-            "observed": None,
-            "predicted": None,
             "duration_sec": 0.0,
         }
         step_start = time.monotonic()
@@ -1807,16 +1896,24 @@ def run_fixed_ui_scenario(
 
             # Extract completion fields
             fields = completion_event.get("fields", {}) or {}
-            change_id = fields.get("change_id")
-            generation = fields.get("generation")
-            desired_text_event = fields.get("desired_text", "")
-            editor_state = fields.get("editor_state")
-            completion_cls = fields.get("classification")  # null = Synced
+            editor_state = fields.get("editor_state") or {}
+            completion_cls = editor_state.get("classification") or fields.get("classification")  # null = Synced
 
-            step["change_id"] = change_id
-            step["generation"] = generation
-            step["editor_state"] = editor_state
-            step["completion_classification"] = completion_cls
+            step.update({
+                "current_text": editor_state.get("current_text"),
+                "opaque_input_state": editor_state.get("opaque_input_state"),
+                "opaque_output_state": editor_state.get("opaque_output_state"),
+                "symbolic_actions": editor_state.get("symbolic_actions"),
+                "compiled_operations": editor_state.get("compiled_operations"),
+                "package_id": editor_state.get("package_id"),
+                "package_version": editor_state.get("package_version"),
+                "package_source_hash": editor_state.get("package_source_hash"),
+                "host_abi": editor_state.get("host_abi"),
+                "layout_id": editor_state.get("layout_id"),
+                "cost_metric_id": editor_state.get("cost_metric_id"),
+                "policy_id": editor_state.get("policy_id"),
+                "transaction_outcome": editor_state.get("transaction_outcome"),
+            })
 
             # 3. Classify completion outcome
             if completion_cls is not None:
@@ -1824,6 +1921,7 @@ def run_fixed_ui_scenario(
                 if completion_cls in (
                     "PlanningError", "InconsistentPrediction",
                     "UnrepresentableContent", "UnsupportedBehavior",
+                    "AbiMismatch",
                 ):
                     step["classification"] = "planning"
                 elif completion_cls == "TransportFailure":
@@ -1864,65 +1962,20 @@ def run_fixed_ui_scenario(
                 observer_target, observer_identity, known_hosts,
             )
             observed_buffer = snap.get("buffer", "")
-            observed_point = snap.get("point")
-            observed_contract = snap.get("contract_version")
+            step["fixture_result"] = snap
 
-            step["observed"] = {
-                "buffer": observed_buffer,
-                "point": observed_point,
-                "contract_version": observed_contract,
-            }
+            buffer_match = observed_buffer == expected_text
 
-            # 7. Compare buffer/point
-            # Predicted buffer comes from editor_state.predictedBuffer, fallback to desired_text
-            predicted_buffer = None
-            predicted_point = None
-            if editor_state and isinstance(editor_state, dict):
-                predicted_buffer = editor_state.get("predictedBuffer")
-                predicted_point = editor_state.get("predictedPoint")
-            if predicted_buffer is None:
-                predicted_buffer = expected_text
-            if predicted_point is None:
-                predicted_point = len(predicted_buffer)
-
-            step["predicted"] = {
-                "buffer": predicted_buffer,
-                "point": predicted_point,
-            }
-
-            buffer_match = observed_buffer == predicted_buffer
-            point_match = observed_point == predicted_point
-
-            if buffer_match and point_match and predicted_buffer == expected_text:
+            if buffer_match:
                 step["classification"] = "pass"
                 step["match"] = True
-            elif buffer_match and point_match:
-                # predicted==observed but != expected_text
-                step["classification"] = "semantic"
-                step["match"] = False
-                step["failure_detail"] = (
-                    f"predicted==observed but != expected_text: "
-                    f"expected={repr(expected_text)}, "
-                    f"predicted={repr(predicted_buffer)}, "
-                    f"observed={repr(observed_buffer)}"
-                )
-            elif not buffer_match:
-                step["classification"] = "semantic"
-                step["match"] = False
-                step["failure_detail"] = (
-                    f"observed != predicted: "
-                    f"expected={repr(expected_text)}, "
-                    f"predicted={repr(predicted_buffer)}, "
-                    f"observed={repr(observed_buffer)}, "
-                    f"point={observed_point}"
-                )
             else:
                 step["classification"] = "semantic"
                 step["match"] = False
                 step["failure_detail"] = (
-                    f"point mismatch: "
-                    f"observed_point={observed_point}, "
-                    f"predicted_point={predicted_point}"
+                    f"observed != expected: "
+                    f"expected={repr(expected_text)}, "
+                    f"observed={repr(observed_buffer)}"
                 )
 
             # Write per-step fixture snapshot
@@ -2073,13 +2126,21 @@ def run_dry_run(args: dict) -> bool:
 
         step = {
             "seq": 1,
-            "desired": "hello",
-            "lcp": 0,
-            "old_mid": "",
-            "new_mid": "hello",
-            "plan_ops": ["ctrl-a", "type hello"],
-            "predicted": {"buffer": "hello", "point": 5, "revision": 1},
-            "observed": {"buffer": "hello", "point": 5},
+            "current_text": "",
+            "desired_text": "hello",
+            "opaque_input_state": {},
+            "opaque_output_state": {"buffer": "hello"},
+            "symbolic_actions": [{"kind": "text", "text": "hello"}],
+            "compiled_operations": ["ctrl-a", "type hello"],
+            "package_id": "readline-emacs-ascii",
+            "package_version": "1.0.0",
+            "package_source_hash": "mock-hash",
+            "host_abi": 1,
+            "layout_id": "us",
+            "cost_metric_id": "low-level-ops",
+            "policy_id": "CONFORMANCE",
+            "transaction_outcome": "COMMITTED",
+            "fixture_result": {"buffer": "hello", "contract_version": 1},
             "barrier_consumed": True,
             "match": True,
             "classification": cls,
@@ -2088,8 +2149,9 @@ def run_dry_run(args: dict) -> bool:
         }
         if cls == "planning":
             step.update({
-                "plan_ops": [],
-                "predicted": None,
+                "compiled_operations": [],
+                "opaque_output_state": None,
+                "symbolic_actions": None,
                 "barrier_consumed": False,
                 "match": False,
                 "failure_detail": "planning failure: InconsistentPrediction",
@@ -2126,9 +2188,15 @@ def run_dry_run(args: dict) -> bool:
             })
         elif cls == "semantic":
             step.update({
-                "observed": {"buffer": "hxllo", "point": 2},
+                "fixture_result": {"buffer": "hxllo", "contract_version": 1},
                 "match": False,
-                "failure_detail": "observed != predicted",
+                "failure_detail": "observed != desired",
+            })
+        elif cls == "completion_timeout":
+            step.update({
+                "barrier_consumed": False,
+                "match": False,
+                "failure_detail": "completion event not received within timeout",
             })
         writer.record_step(step)
 
@@ -2197,6 +2265,7 @@ def run_dry_run(args: dict) -> bool:
         full_sequence=dry_run_sequence,
         failing_prefix=[] if not classify or classify == "pass"
             else dry_run_sequence,
+        ordered_steps=[step] if classify and classify != "pass" else [],
         seed=seed,
         profile=profile,
         max_len=hypo_max_len,
@@ -2233,69 +2302,123 @@ def run_replay(args: dict) -> bool:
     replay_path = args["replay"]
     single_step = args.get("single_step", False)
     if single_step and not args.get("out_dir"):
-        args["out_dir"] = (
-            f"artifacts/run_editor_replay_{int(time.time())}"
-        )
+        args["out_dir"] = f"artifacts/run_editor_replay_{int(time.time())}"
 
     try:
         with open(replay_path) as f:
             replay = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(json.dumps({
-            "phase": "replay_error",
-            "error": f"cannot load replay data: {e}",
-        }), file=sys.stderr)
+        print(
+            json.dumps({
+                "phase": "replay_error",
+                "error": f"cannot load replay data: {e}",
+            }),
+            file=sys.stderr,
+        )
         return False
 
     # Detect replay_context.json (full sequence) vs per-step replay.json
-    is_context = "full_sequence" in replay or "failing_prefix" in replay
+    is_context = (
+        "ordered_steps" in replay
+        or "full_sequence" in replay
+        or "failing_prefix" in replay
+    )
 
     if is_context:
         # Validate replay context structure
-        required_fields = [
-            "full_sequence", "failing_prefix", "seed", "profile",
-        ]
+        required_fields = ["ordered_steps", "seed", "profile"]
         missing = [f for f in required_fields if f not in replay]
         if missing:
-            print(json.dumps({
-                "phase": "replay_validation_error",
-                "error": f"missing replay context fields: {missing}",
-            }), file=sys.stderr)
+            print(
+                json.dumps({
+                    "phase": "replay_validation_error",
+                    "error": f"missing replay context fields: {missing}",
+                }),
+                file=sys.stderr,
+            )
             return False
 
         full_seq = replay.get("full_sequence", [])
         failing_prefix = replay.get("failing_prefix", [])
+        ordered_steps = replay.get("ordered_steps", [])
         seed = replay.get("seed")
 
-        print(json.dumps({
-            "phase": "replay_start",
-            "replay": replay_path,
-            "type": "replay_context",
-            "single_step": single_step,
-            "sequence_length": len(full_seq),
-            "prefix_length": len(failing_prefix),
-            "seed": seed,
-        }))
-
-        if not single_step:
-            # Validate mode: just check structure, no hardware
-            print(json.dumps({
-                "phase": "replay_validation",
-                "status": "valid",
-                "fields": required_fields,
+        print(
+            json.dumps({
+                "phase": "replay_start",
+                "replay": replay_path,
+                "type": "replay_context",
+                "single_step": single_step,
                 "sequence_length": len(full_seq),
                 "prefix_length": len(failing_prefix),
                 "seed": seed,
-            }))
+            })
+        )
+
+        if not single_step:
+            # Validate mode: check structure and ordered-step schema, no hardware
+            step_required = [
+                "desired_text",
+                "opaque_input_state",
+                "opaque_output_state",
+                "symbolic_actions",
+                "compiled_operations",
+                "package_id",
+                "package_version",
+                "package_source_hash",
+                "host_abi",
+                "layout_id",
+                "cost_metric_id",
+                "policy_id",
+                "transaction_outcome",
+                "classification",
+            ]
+            step_errors: list[str] = []
+            for i, step_entry in enumerate(ordered_steps):
+                if not isinstance(step_entry, dict):
+                    step_errors.append(f"ordered_steps[{i}] is not a dict")
+                    continue
+                missing_s = [
+                    f for f in step_required if f not in step_entry
+                ]
+                if missing_s:
+                    step_errors.append(
+                        f"ordered_steps[{i}] missing: {missing_s}"
+                    )
+            if step_errors:
+                print(
+                    json.dumps({
+                        "phase": "replay_validation_error",
+                        "error": "invalid ordered_steps schema",
+                        "errors": step_errors,
+                    }),
+                    file=sys.stderr,
+                )
+                return False
+            print(
+                json.dumps({
+                    "phase": "replay_validation",
+                    "status": "valid",
+                    "fields": required_fields,
+                    "step_fields": step_required,
+                    "ordered_steps": len(ordered_steps),
+                    "sequence_length": len(full_seq),
+                    "prefix_length": len(failing_prefix),
+                    "seed": seed,
+                })
+            )
             return True
 
         # Hardware replay: execute the full failing prefix sequence
         bench_path = args.get("bench_toml")
         if not bench_path:
-            print(json.dumps({
-                "phase": "replay_error",
-                "error": "replay --single-step requires --bench-toml",
-            }), file=sys.stderr)
+            print(
+                json.dumps({
+                    "phase": "replay_error",
+                    "error": "replay --single-step requires --bench-toml",
+                }),
+                file=sys.stderr,
+            )
             return False
 
         runner = ConformanceRunner(args)
@@ -2304,9 +2427,73 @@ def run_replay(args: dict) -> bool:
             runner.cleanup()
             return False
 
-        # A failing prefix records an expected failure; an empty prefix is a
-        # passing-sequence replay. Command success means the recorded outcome
-        # reproduced, not merely that the replayed step happened to pass.
+        # Check identity mismatches (Task 9.2)
+        expected_pkg_id = None
+        expected_pkg_version = None
+        expected_pkg_source_hash = None
+        expected_host_abi = None
+        expected_layout_id = None
+        expected_cost_metric_id = None
+        expected_policy_id = None
+
+        if ordered_steps:
+            first_step = ordered_steps[0]
+            expected_pkg_id = first_step.get("package_id")
+            expected_pkg_version = first_step.get("package_version")
+            expected_pkg_source_hash = first_step.get("package_source_hash")
+            expected_host_abi = first_step.get("host_abi")
+            expected_layout_id = first_step.get("layout_id")
+            expected_cost_metric_id = first_step.get("cost_metric_id")
+            expected_policy_id = first_step.get("policy_id")
+
+        mismatches = []
+        if expected_pkg_id is not None and expected_pkg_id != runner.session_package_id:
+            mismatches.append(
+                f"package_id: expected {expected_pkg_id}, got {runner.session_package_id}"
+            )
+        if expected_pkg_version is not None and expected_pkg_version != runner.session_package_version:
+            mismatches.append(
+                f"package_version: expected {expected_pkg_version}, got {runner.session_package_version}"
+            )
+        if expected_pkg_source_hash is not None and expected_pkg_source_hash != runner.session_package_source_hash:
+            mismatches.append(
+                f"package_source_hash: expected {expected_pkg_source_hash}, got {runner.session_package_source_hash}"
+            )
+        if expected_host_abi is not None and expected_host_abi != runner.session_host_abi:
+            mismatches.append(
+                f"host_abi: expected {expected_host_abi}, got {runner.session_host_abi}"
+            )
+        if (
+            expected_layout_id is not None
+            and expected_layout_id != runner.session_layout_id
+        ):
+            mismatches.append(
+                f"layout_id: expected {expected_layout_id}, got {runner.session_layout_id}"
+            )
+        if (
+            expected_cost_metric_id is not None
+            and expected_cost_metric_id != runner.session_cost_metric_id
+        ):
+            mismatches.append(
+                f"cost_metric_id: expected {expected_cost_metric_id}, got {runner.session_cost_metric_id}"
+            )
+        if expected_policy_id is not None and expected_policy_id != runner.session_policy_id:
+            mismatches.append(
+                f"policy_id: expected {expected_policy_id}, got {runner.session_policy_id}"
+            )
+
+        if mismatches:
+            print(
+                json.dumps({
+                    "phase": "replay_identity_mismatch",
+                    "error": "Identity mismatch detected during replay",
+                    "mismatches": mismatches,
+                }),
+                file=sys.stderr,
+            )
+            runner.cleanup()
+            return False
+
         replay_sequence = failing_prefix if failing_prefix else full_seq
         expected_failure = bool(failing_prefix)
         replay_steps = []
@@ -2314,91 +2501,173 @@ def run_replay(args: dict) -> bool:
 
         try:
             if not runner.setup_sequence():
-                print(json.dumps({
-                    "phase": "replay_error",
-                    "error": "fixture reset failed for replay",
-                }), file=sys.stderr)
+                print(
+                    json.dumps({
+                        "phase": "replay_error",
+                        "error": "fixture reset failed for replay",
+                    }),
+                    file=sys.stderr,
+                )
                 runner.cleanup()
                 return False
 
-            for i, desired in enumerate(replay_sequence):
-                step = runner.execute_step(
-                    runner.next_seq(), desired,
-                    args.get("timeout_mult", 1.0),
-                )
-                replay_steps.append(step)
-                if step.get("match") is False:
-                    all_match = False
-                    print(json.dumps({
-                        "phase": "replay_step",
-                        "step": i,
-                        "status": "failed",
-                        "classification": step.get("classification"),
-                        "failure_detail": (
-                            step.get("failure_detail") or ""
-                        )[:200],
-                    }))
-                    break
-                else:
-                    print(json.dumps({
-                        "phase": "replay_step",
-                        "step": i,
-                        "status": "passed",
-                    }))
+            if ordered_steps:
+                # Replay exactly using the recorded state restoration parameters (Task 9.2)
+                for i, step_entry in enumerate(ordered_steps):
+                    desired = step_entry["desired_text"]
+                    opaque_input_state = step_entry.get("opaque_input_state")
+                    opaque_input_state_encoded = ""
+                    if opaque_input_state is not None:
+                        opaque_json = json.dumps(opaque_input_state)
+                        opaque_input_state_encoded = base64.urlsafe_b64encode(
+                            opaque_json.encode("utf-8")
+                        ).decode("utf-8")
+
+                    current_text = step_entry.get("current_text")
+                    current_text_encoded = ""
+                    if current_text is not None:
+                        current_text_encoded = base64.urlsafe_b64encode(
+                            current_text.encode("utf-8")
+                        ).decode("utf-8")
+
+                    step = runner.execute_step(
+                        runner.next_seq(),
+                        desired,
+                        args.get("timeout_mult", 1.0),
+                        opaque_input_state_encoded=opaque_input_state_encoded,
+                        current_text_encoded=current_text_encoded,
+                    )
+                    replay_steps.append(step)
+                    if step.get("match") is False:
+                        all_match = False
+                        print(
+                            json.dumps({
+                                "phase": "replay_step",
+                                "step": i,
+                                "status": "failed",
+                                "classification": step.get("classification"),
+                                "failure_detail": (
+                                    step.get("failure_detail") or ""
+                                )[:200],
+                            })
+                        )
+                        break
+                    else:
+                        print(
+                            json.dumps({
+                                "phase": "replay_step",
+                                "step": i,
+                                "status": "passed",
+                            })
+                        )
+            else:
+                for i, desired in enumerate(replay_sequence):
+                    step = runner.execute_step(
+                        runner.next_seq(), desired, args.get("timeout_mult", 1.0)
+                    )
+                    replay_steps.append(step)
+                    if step.get("match") is False:
+                        all_match = False
+                        print(
+                            json.dumps({
+                                "phase": "replay_step",
+                                "step": i,
+                                "status": "failed",
+                                "classification": step.get("classification"),
+                                "failure_detail": (
+                                    step.get("failure_detail") or ""
+                                )[:200],
+                            })
+                        )
+                        break
+                    else:
+                        print(
+                            json.dumps({
+                                "phase": "replay_step",
+                                "step": i,
+                                "status": "passed",
+                            })
+                        )
         finally:
             runner.cleanup()
 
         reproduces = (not all_match) if expected_failure else all_match
-        print(json.dumps({
-            "phase": "replay_result",
-            "sequence_length": len(replay_sequence),
-            "steps_executed": len(replay_steps),
-            "all_match": all_match,
-            "expected_failure": expected_failure,
-            "reproduces": reproduces,
-            "steps": replay_steps,
-        }))
+        print(
+            json.dumps({
+                "phase": "replay_result",
+                "sequence_length": len(replay_sequence),
+                "steps_executed": len(replay_steps),
+                "all_match": all_match,
+                "expected_failure": expected_failure,
+                "reproduces": reproduces,
+                "steps": replay_steps,
+            })
+        )
         return reproduces
 
     else:
         # Per-step replay.json
         required_fields = [
-            "desired", "lcp", "old_mid", "new_mid",
-            "plan_ops", "predicted", "classification",
+            "current_text",
+            "desired_text",
+            "opaque_input_state",
+            "opaque_output_state",
+            "symbolic_actions",
+            "compiled_operations",
+            "package_id",
+            "package_version",
+            "package_source_hash",
+            "host_abi",
+            "layout_id",
+            "cost_metric_id",
+            "policy_id",
+            "transaction_outcome",
+            "fixture_result",
+            "classification",
         ]
         missing = [f for f in required_fields if f not in replay]
         if missing:
-            print(json.dumps({
-                "phase": "replay_validation_error",
-                "error": f"missing required replay fields: {missing}",
-            }), file=sys.stderr)
+            print(
+                json.dumps({
+                    "phase": "replay_validation_error",
+                    "error": f"missing required replay fields: {missing}",
+                }),
+                file=sys.stderr,
+            )
             return False
 
-        print(json.dumps({
-            "phase": "replay_start",
-            "replay": replay_path,
-            "type": "per_step",
-            "single_step": single_step,
-            "classification": replay.get("classification"),
-            "desired": replay.get("desired", "")[:50],
-        }))
+        print(
+            json.dumps({
+                "phase": "replay_start",
+                "replay": replay_path,
+                "type": "per_step",
+                "single_step": single_step,
+                "classification": replay.get("classification"),
+                "desired": replay.get("desired_text", "")[:50],
+            })
+        )
 
         if not single_step:
             # Validate mode: just check structure, no hardware
-            print(json.dumps({
-                "phase": "replay_validation",
-                "status": "valid",
-                "fields": required_fields,
-                "classification": replay.get("classification"),
-            }))
+            print(
+                json.dumps({
+                    "phase": "replay_validation",
+                    "status": "valid",
+                    "fields": required_fields,
+                    "classification": replay.get("classification"),
+                })
+            )
             return True
 
         bench_path = args.get("bench_toml")
         if not bench_path:
-            print(json.dumps({
-                "phase": "replay_error",
-                "error": "replay --single-step requires --bench-toml",
-            }), file=sys.stderr)
+            print(
+                json.dumps({
+                    "phase": "replay_error",
+                    "error": "replay --single-step requires --bench-toml",
+                }),
+                file=sys.stderr,
+            )
             return False
 
         runner = ConformanceRunner(args)
@@ -2407,18 +2676,96 @@ def run_replay(args: dict) -> bool:
             runner.cleanup()
             return False
 
+        # Check identity mismatches (Task 9.2)
+        expected_pkg_id = replay.get("package_id")
+        expected_pkg_version = replay.get("package_version")
+        expected_pkg_source_hash = replay.get("package_source_hash")
+        expected_host_abi = replay.get("host_abi")
+        expected_layout_id = replay.get("layout_id")
+        expected_cost_metric_id = replay.get("cost_metric_id")
+        expected_policy_id = replay.get("policy_id")
+
+        mismatches = []
+        if expected_pkg_id is not None and expected_pkg_id != runner.session_package_id:
+            mismatches.append(
+                f"package_id: expected {expected_pkg_id}, got {runner.session_package_id}"
+            )
+        if expected_pkg_version is not None and expected_pkg_version != runner.session_package_version:
+            mismatches.append(
+                f"package_version: expected {expected_pkg_version}, got {runner.session_package_version}"
+            )
+        if expected_pkg_source_hash is not None and expected_pkg_source_hash != runner.session_package_source_hash:
+            mismatches.append(
+                f"package_source_hash: expected {expected_pkg_source_hash}, got {runner.session_package_source_hash}"
+            )
+        if expected_host_abi is not None and expected_host_abi != runner.session_host_abi:
+            mismatches.append(
+                f"host_abi: expected {expected_host_abi}, got {runner.session_host_abi}"
+            )
+        if (
+            expected_layout_id is not None
+            and expected_layout_id != runner.session_layout_id
+        ):
+            mismatches.append(
+                f"layout_id: expected {expected_layout_id}, got {runner.session_layout_id}"
+            )
+        if (
+            expected_cost_metric_id is not None
+            and expected_cost_metric_id != runner.session_cost_metric_id
+        ):
+            mismatches.append(
+                f"cost_metric_id: expected {expected_cost_metric_id}, got {runner.session_cost_metric_id}"
+            )
+        if expected_policy_id is not None and expected_policy_id != runner.session_policy_id:
+            mismatches.append(
+                f"policy_id: expected {expected_policy_id}, got {runner.session_policy_id}"
+            )
+
+        if mismatches:
+            print(
+                json.dumps({
+                    "phase": "replay_identity_mismatch",
+                    "error": "Identity mismatch detected during replay",
+                    "mismatches": mismatches,
+                }),
+                file=sys.stderr,
+            )
+            runner.cleanup()
+            return False
+
         try:
             if not runner.setup_sequence():
-                print(json.dumps({
-                    "phase": "replay_error",
-                    "error": "fixture reset failed for replay",
-                }), file=sys.stderr)
+                print(
+                    json.dumps({
+                        "phase": "replay_error",
+                        "error": "fixture reset failed for replay",
+                    }),
+                    file=sys.stderr,
+                )
                 return False
 
-            desired = replay["desired"]
+            desired = replay["desired_text"]
+            opaque_input_state = replay.get("opaque_input_state")
+            opaque_input_state_encoded = ""
+            if opaque_input_state is not None:
+                opaque_json = json.dumps(opaque_input_state)
+                opaque_input_state_encoded = base64.urlsafe_b64encode(
+                    opaque_json.encode("utf-8")
+                ).decode("utf-8")
+
+            current_text = replay.get("current_text")
+            current_text_encoded = ""
+            if current_text is not None:
+                current_text_encoded = base64.urlsafe_b64encode(
+                    current_text.encode("utf-8")
+                ).decode("utf-8")
+
             step = runner.execute_step(
-                runner.next_seq(), desired,
+                runner.next_seq(),
+                desired,
                 args.get("timeout_mult", 1.0),
+                opaque_input_state_encoded=opaque_input_state_encoded,
+                current_text_encoded=current_text_encoded,
             )
         finally:
             runner.cleanup()
@@ -2427,14 +2774,16 @@ def run_replay(args: dict) -> bool:
         actual_classification = step.get("classification")
         reproduces = actual_classification == expected_classification
 
-        print(json.dumps({
-            "phase": "replay_result",
-            "expected_classification": expected_classification,
-            "actual_classification": actual_classification,
-            "step": step,
-            "match": step.get("match"),
-            "reproduces": reproduces,
-        }))
+        print(
+            json.dumps({
+                "phase": "replay_result",
+                "expected_classification": expected_classification,
+                "actual_classification": actual_classification,
+                "step": step,
+                "match": step.get("match"),
+                "reproduces": reproduces,
+            })
+        )
         return reproduces
 
 

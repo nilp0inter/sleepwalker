@@ -1,5 +1,7 @@
 package io.sleepwalker.core.editor
 
+import java.security.MessageDigest
+
 import android.content.res.AssetManager
 import io.sleepwalker.core.hid.LowLevelHid
 import java.io.IOException
@@ -39,8 +41,43 @@ class TargetPackageLoader(private val assetManager: AssetManager) {
     }
 
     /** Create an Editor from a package proven to be in the bundled registry. */
-    fun createEditor(id: String, executor: EditorExecutor, hid: LowLevelHid): Editor =
-        Editor(load(id), executor, hid)
+    fun createEditor(
+        id: String,
+        executor: EditorExecutor,
+        hid: LowLevelHid,
+        policy: ExecutionPolicy = ExecutionPolicy.PRODUCTION
+    ): Editor {
+        val target = load(id)
+        val sharedModules = loadSharedModules()
+        return Editor(target, executor, hid, sharedModules, policy)
+    }
+
+    /** Load the host-owned shared modules from assets. */
+    internal fun loadSharedModules(): Map<String, String> {
+        val sharedModules = mutableMapOf<String, String>()
+        try {
+            val sharedFiles = assetManager.list("modules/sleepwalker")
+            sharedFiles?.forEach { file ->
+                if (file.endsWith(".lua")) {
+                    val sub = file.substringBeforeLast(".lua")
+                    if (sub.isEmpty() || !sub.all { it.isLetterOrDigit() || it == '_' || it == '-' }) {
+                        throw IllegalArgumentException("Invalid shared module name: $file")
+                    }
+                    val name = "sleepwalker.$sub"
+                    sharedModules[name] = readAsset("modules/sleepwalker/$file")
+                }
+            }
+        } catch (e: IOException) {
+            // Allow empty modules in non-conformance tests if they are not added yet
+        }
+        return sharedModules
+    }
+
+    private fun computeSHA256(input: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(input.toByteArray(Charsets.UTF_8))
+        return hash.joinToString("") { "%02x".format(it) }
+    }
 
     /**
      * Load a target package by ID.
@@ -68,16 +105,66 @@ class TargetPackageLoader(private val assetManager: AssetManager) {
             "Target package manifest id '${manifest["id"]}' does not match '$id'"
         }
 
-
         val hostAbi = manifest["host_abi"] as? Int
             ?: throw IllegalArgumentException("Missing 'host_abi' in $basePath/manifest.lua")
-
 
         val mainLua = try {
             readAsset("$basePath/main.lua")
         } catch (e: IOException) {
             throw IOException("Target package '$id' main.lua not found", e)
         }
+
+        val localModules = mutableMapOf<String, String>()
+
+        // Try listing targets/$id/modules
+        try {
+            val moduleFiles = assetManager.list("$basePath/modules")
+            moduleFiles?.forEach { file ->
+                if (file.endsWith(".lua")) {
+                    val name = file.substringBeforeLast(".lua")
+                    if (name.startsWith("sleepwalker.") || name == "sleepwalker") {
+                        throw IllegalArgumentException("Package local module '$name' shadows reserved namespace")
+                    }
+                    if (name.contains('.') || name.contains('/') || name.contains('\\') || !name.all { it.isLetterOrDigit() || it == '_' || it == '-' }) {
+                        throw IllegalArgumentException("Invalid local module name: $name")
+                    }
+                    localModules[name] = readAsset("$basePath/modules/$file")
+                }
+            }
+        } catch (e: IOException) {
+            // Ignore
+        }
+
+        // Try listing targets/$id for direct modules (excluding main.lua and manifest.lua)
+        try {
+            val rootFiles = assetManager.list(basePath)
+            rootFiles?.forEach { file ->
+                if (file.endsWith(".lua") && file != "main.lua" && file != "manifest.lua") {
+                    val name = file.substringBeforeLast(".lua")
+                    if (name.startsWith("sleepwalker.") || name == "sleepwalker") {
+                        throw IllegalArgumentException("Package local module '$name' shadows reserved namespace")
+                    }
+                    if (name.contains('.') || name.contains('/') || name.contains('\\') || !name.all { it.isLetterOrDigit() || it == '_' || it == '-' }) {
+                        throw IllegalArgumentException("Invalid local module name: $name")
+                    }
+                    if (localModules.containsKey(name)) {
+                        throw IllegalArgumentException("Duplicate local module definition: '$name'")
+                    }
+                    localModules[name] = readAsset("$basePath/$file")
+                }
+            }
+        } catch (e: IOException) {
+            // Ignore
+        }
+
+        val sb = StringBuilder()
+        sb.append("id:").append(manifest.getValue("id") as String).append("\n")
+        sb.append("version:").append(manifest.getValue("version") as String).append("\n")
+        sb.append("main:").append(mainLua).append("\n")
+        localModules.keys.sorted().forEach { name ->
+            sb.append("module:").append(name).append(":").append(localModules[name]).append("\n")
+        }
+        val sourceHash = computeSHA256(sb.toString())
 
         return TargetPackage(
             id = manifest.getValue("id") as String,
@@ -90,6 +177,8 @@ class TargetPackageLoader(private val assetManager: AssetManager) {
             lineModel = manifest.getValue("line_model") as String,
             description = extractDescription(manifest),
             mainLua = mainLua,
+            modules = localModules,
+            sourceHash = sourceHash,
         )
     }
 
@@ -171,7 +260,7 @@ class TargetPackageLoader(private val assetManager: AssetManager) {
                         }
                     }
                 }
-                map as Map<String, Any>
+                map
             }
             value.toIntOrNull() != null -> value.toInt()
             else -> value

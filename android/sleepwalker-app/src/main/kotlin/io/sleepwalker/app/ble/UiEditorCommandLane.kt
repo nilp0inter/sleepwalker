@@ -2,6 +2,7 @@ package io.sleepwalker.app.ble
 
 import android.os.Handler
 import io.sleepwalker.app.diagnostics.SwLog
+import io.sleepwalker.app.adb.AdbCommandReceiver
 import io.sleepwalker.core.editor.Editor
 import io.sleepwalker.core.editor.EditorResult
 import java.util.concurrent.ExecutorService
@@ -106,18 +107,21 @@ class UiEditorCommandLane(
             "editor_state" to snapshot?.let { s ->
                 mapOf(
                     "state" to s.state.name,
-                    "targetId" to s.targetId,
-                    "hostAbi" to s.hostAbi,
-                    "assumedBuffer" to s.assumedBuffer,
-                    "desiredText" to s.desiredText,
-                    "lcp" to s.lcp,
-                    "oldMid" to s.oldMid,
-                    "newMid" to s.newMid,
-                    "predictedBuffer" to s.predictedBuffer,
-                    "predictedPoint" to s.predictedPoint,
-                    "predictedRevision" to s.predictedRevision,
-                    "lastPlanOps" to s.lastPlanOps,
-                    "lastClassification" to s.lastClassification,
+                    "target_id" to s.targetId,
+                    "target_version" to s.targetVersion,
+                    "target_source_hash" to s.targetSourceHash,
+                    "host_abi" to s.hostAbi,
+                    "current_text" to s.currentText,
+                    "desired_text" to s.desiredText,
+                    "opaque_input_state" to s.opaqueInputState?.toString(),
+                    "opaque_output_state" to s.opaqueOutputState?.toString(),
+                    "symbolic_actions" to s.symbolicActions?.toString(),
+                    "compiled_operations" to s.ops?.map { AdbCommandReceiver.formatLowLevelOp(it) },
+                    "layout_id" to s.layoutId,
+                    "cost_metric_id" to s.costMetricId,
+                    "policy_id" to s.policyId,
+                    "transaction_outcome" to s.outcome,
+                    "classification" to s.lastClassification,
                 )
             },
             "classification" to when (result) {

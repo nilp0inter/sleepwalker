@@ -3,9 +3,11 @@ package io.sleepwalker.core.editor
 import io.sleepwalker.core.hid.LowLevelHid
 import io.sleepwalker.core.hid.LowLevelOp
 import io.sleepwalker.core.keymap.HostProfile
-import io.sleepwalker.core.protocol.Usages
 import io.sleepwalker.core.text.TextPlanner
+import io.sleepwalker.core.text.TextPlan
 import io.sleepwalker.core.text.TextRenderingFailure
+import io.sleepwalker.core.protocol.HidUsage
+import io.sleepwalker.core.protocol.Opcodes
 import party.iroiro.luajava.JFunction
 import party.iroiro.luajava.LuaException
 import party.iroiro.luajava.lua54.Lua54
@@ -13,40 +15,37 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
 /**
- * Constrained Lua 5.4 host adapter with the versioned `host` ABI.
- *
- * Manages a single [Lua54] instance per target package. For each
- * [planTransition] call the adapter deep-copies the Editor's committed
- * [ReadlineProgramState] into an invocation-local Lua table, calls the
- * target's `plan(...)` function, collects ops via [PlanBuilder], and
- * returns the predicted next program state.
- *
- * Between invocations the Lua VM retains **no** target-specific
- * mutable state beyond the registered planning function, the `host`
- * global table, and the custom `require` loader. Explicit program state
- * is passed in and out each call.
- *
- * @property hid        HID primitive factory.
- * @property textPlanner text planning instance (same profile as Editor).
+ * Thrown when loading Lua source code fails.
+ */
+class LuaLoadException(message: String) : RuntimeException(message)
+
+/**
+ * Result of a Lua planner invocation.
+ */
+sealed class LuaInvocationResult {
+    data class Success(
+        val actions: List<SymbolicAction>,
+        val nextState: AbiValue,
+        val compileCache: Map<String, List<LowLevelOp>>
+    ) : LuaInvocationResult()
+
+    data class Failure(val classification: FailureClassification) : LuaInvocationResult()
+}
+
+/**
+ * Constrained Lua 5.4 host adapter.
+ * Creates a fresh, isolated VM for every invocation to ensure planning is pure.
  */
 internal class LuaHostAdapter(
     private val hid: LowLevelHid,
     private val textPlanner: TextPlanner,
+    private val sharedModules: Map<String, String>,
 ) : AutoCloseable {
 
-    private var lua: Lua54 = Lua54()
-    private val profile: HostProfile = HostProfile.LINUX_US
-    private var currentBuilder: PlanBuilder? = null
-    private var targetDescription: Map<String, String> = emptyMap()
-    private var initialized = false
-    private var loadedPackage: TargetPackage? = null
-    private var hasPlanned = false
-
-    /** Charset constant for string-to-ByteBuffer conversion. */
-    private val charset = StandardCharsets.UTF_8
+    private val costTextPlanner = TextPlanner(hid = NonAllocatingHid)
 
     private fun directBuffer(source: String): ByteBuffer {
-        val bytes = source.toByteArray(charset)
+        val bytes = source.toByteArray(StandardCharsets.UTF_8)
         return ByteBuffer.allocateDirect(bytes.size).apply {
             put(bytes)
             flip()
@@ -54,322 +53,292 @@ internal class LuaHostAdapter(
     }
 
     /**
-     * Initialize the Lua runtime and load the target package.
-     *
-     * Sets up the constrained environment, registers the `host` ABI
-     * global table, and loads [TargetPackage.mainLua].
+     * Run the package's pure state initializer on a fresh VM.
      */
-    fun initialize(pkg: TargetPackage) {
-        check(pkg.hostAbi == TargetPackage.HOST_ABI_VERSION) {
-            "ABI mismatch: package requires ${pkg.hostAbi}, " +
-                "host provides ${TargetPackage.HOST_ABI_VERSION}"
-        }
-        loadedPackage = pkg
+    fun runInitializer(target: TargetPackage, currentText: String): AbiValue {
+        val L = Lua54()
         try {
-            loadPackageProgram(pkg)
-            initialized = true
-        } catch (failure: LuaLoadException) {
-            loadedPackage = null
-            lua.close()
-            throw failure
+            setupVM(L, target, HostProfile.LINUX_US, "", "", null)
+
+            val chunkName = "@${target.id}/main.lua"
+            val buf = directBuffer(target.mainLua)
+            L.load(buf, chunkName)
+            L.pCall(0, 1)
+
+            if (!L.isTable(-1)) {
+                throw LuaLoadException("Package main.lua must return the package table")
+            }
+
+            L.getField(-1, "initialize")
+            if (L.isNil(-1)) {
+                throw LuaLoadException("initialize function not found in package table")
+            }
+
+            L.push(currentText)
+            L.pCall(1, 1)
+
+            return AbiCodec.decode(L, -1)
+        } catch (e: Exception) {
+            throw LuaLoadException("Failed to run initializer: ${e.message}")
+        } finally {
+            L.close()
         }
     }
 
-    private fun loadPackageProgram(pkg: TargetPackage) {
-        targetDescription = pkg.description
-        setupConstrainedEnvironment()
-        registerHostFunctions()
-        precompilePackageModules(pkg)
+    /**
+     * Run the package's planning function on a fresh VM.
+     */
+    fun runPlan(
+        target: TargetPackage,
+        currentText: String,
+        desiredText: String,
+        opaqueState: AbiValue,
+        profile: HostProfile
+    ): LuaInvocationResult {
+        val L = Lua54()
+        val compileCache = mutableMapOf<String, List<LowLevelOp>>()
+        val layoutId = profile.key
+        val costMetricId = "op_count:1"
+        try {
+            setupVM(L, target, profile, layoutId, costMetricId, compileCache)
 
-        val chunkName = "@${pkg.id}/main.lua"
-        val buf = directBuffer(pkg.mainLua)
-        try {
-            lua.load(buf, chunkName)
-        } catch (e: LuaException) {
-            throw LuaLoadException("Failed to parse ${pkg.id}/main.lua: ${e.message}")
-        }
-        try {
-            lua.pCall(0, 0)
-        } catch (e: LuaException) {
-            throw LuaLoadException("Failed to run ${pkg.id}/main.lua: ${e.message}")
+            val chunkName = "@${target.id}/main.lua"
+            val buf = directBuffer(target.mainLua)
+            L.load(buf, chunkName)
+            L.pCall(0, 1)
+
+            if (!L.isTable(-1)) {
+                return LuaInvocationResult.Failure(
+                    FailureClassification.PlanningError("Package main.lua must return the package table")
+                )
+            }
+
+            L.getField(-1, "abi_version")
+            val pkgAbi = if (L.isInteger(-1)) L.toInteger(-1).toInt() else -1
+            L.pop(1)
+            if (pkgAbi != TargetPackage.HOST_ABI_VERSION) {
+                return LuaInvocationResult.Failure(
+                    FailureClassification.AbiMismatch(
+                        expected = TargetPackage.HOST_ABI_VERSION,
+                        actual = pkgAbi
+                    )
+                )
+            }
+
+            L.getField(-1, "plan")
+            if (L.isNil(-1)) {
+                return LuaInvocationResult.Failure(
+                    FailureClassification.PlanningError("plan function not found in package table")
+                )
+            }
+
+            L.push(currentText)
+            L.push(desiredText)
+            AbiCodec.encode(L, opaqueState)
+
+            L.pCall(3, 1)
+
+            val decodedResult = try {
+                AbiCodec.decode(L, -1)
+            } catch (e: Exception) {
+                return LuaInvocationResult.Failure(
+                    FailureClassification.PlanningError("Failed to decode plan result: ${e.message}")
+                )
+            }
+
+            if (decodedResult !is AbiValue.Obj) {
+                return LuaInvocationResult.Failure(
+                    FailureClassification.PlanningError("Plan result must be an object table")
+                )
+            }
+
+            val errorVal = decodedResult.fields["error"]
+            if (errorVal != null) {
+                if (errorVal !is AbiValue.Str) {
+                    return LuaInvocationResult.Failure(
+                        FailureClassification.PlanningError("Plan error field must be a string")
+                    )
+                }
+                return LuaInvocationResult.Failure(classifyTargetFailure(errorVal.value, desiredText))
+            }
+
+            val actionsVal = decodedResult.fields["actions"]
+                ?: return LuaInvocationResult.Failure(
+                    FailureClassification.PlanningError("Plan result missing 'actions'")
+                )
+            val nextStateVal = decodedResult.fields["next_state"]
+                ?: return LuaInvocationResult.Failure(
+                    FailureClassification.PlanningError("Plan result missing 'next_state'")
+                )
+
+            if (actionsVal !is AbiValue.Array) {
+                return LuaInvocationResult.Failure(
+                    FailureClassification.PlanningError("Plan actions must be an array")
+                )
+            }
+
+            val actions = mutableListOf<SymbolicAction>()
+            for (actionVal in actionsVal.values) {
+                val action = try {
+                    AbiCodec.parseSymbolicAction(actionVal)
+                } catch (e: Exception) {
+                    return LuaInvocationResult.Failure(
+                        FailureClassification.PlanningError("Failed to parse symbolic action: ${e.message}")
+                    )
+                }
+                actions.add(action)
+            }
+
+            return LuaInvocationResult.Success(actions, nextStateVal, compileCache)
+        } catch (e: Exception) {
+            return LuaInvocationResult.Failure(
+                FailureClassification.PlanningError("Lua runtime error: ${e.message}")
+            )
+        } finally {
+            L.close()
         }
     }
 
-    private fun resetInvocationEnvironment() {
-        lua.close()
-        lua = Lua54()
-        currentBuilder = null
-        loadPackageProgram(checkNotNull(loadedPackage))
-    }
-
-    // ── Constrained environment setup ──
-
-    private fun setupConstrainedEnvironment() {
-        // Open only allowlisted Lua libraries
+    private fun setupVM(
+        L: Lua54,
+        target: TargetPackage,
+        profile: HostProfile,
+        layoutId: String,
+        costMetricId: String,
+        compileCache: MutableMap<String, List<LowLevelOp>>?
+    ) {
+        // 1. Open allowed libraries
         for (lib in TargetPackage.ALLOWED_LUA_LIBRARIES) {
-            lua.openLibrary(lib)
+            L.openLibrary(lib)
         }
 
-        // Remove dangerous base functions
+        // 2. Remove base functions and dangerous globals
         for (name in TargetPackage.REMOVED_BASE_FUNCTIONS) {
-            lua.pushNil()
-            lua.setGlobal(name)
+            L.pushNil()
+            L.setGlobal(name)
         }
-
         for (name in TargetPackage.REMOVED_GLOBALS) {
-            lua.pushNil()
-            lua.setGlobal(name)
+            L.pushNil()
+            L.setGlobal(name)
         }
 
-        // Strip floating-point, transcendental, constant, and random members;
-        // targets retain only deterministic integer-safe math helpers.
-        lua.getGlobal("math")
+        // Strip non-deterministic math members
+        L.getGlobal("math")
         for (name in TargetPackage.REMOVED_MATH_MEMBERS) {
-            lua.pushNil()
-            lua.setField(-2, name)
+            L.pushNil()
+            L.setField(-2, name)
         }
-        lua.pop(1)
+        L.pop(1)
 
-        // Create __modules table for custom require
-        lua.newTable()
-        lua.setGlobal("__modules")
+        // 3. Create module loader, cache, loading state tables
+        L.newTable()
+        L.setGlobal("__loaders")
+        L.newTable()
+        L.setGlobal("__cache")
+        L.newTable()
+        L.setGlobal("__loading_state")
 
-        // Install custom require (replaces the disabled package library).
-        // This require does NOT call global load() — each module has been
-        // pre-compiled into a Lua closure by precompilePackageModules().
+        // 4. Register shared and local module loaders
+        fun registerLoader(name: String, source: String, chunkName: String) {
+            val buf = directBuffer(source)
+            try {
+                L.load(buf, chunkName)
+            } catch (e: LuaException) {
+                throw LuaLoadException("Failed to compile module '$name': ${e.message}")
+            }
+            L.getGlobal("__loaders")
+            L.pushValue(-2)
+            L.setField(-2, name)
+            L.pop(2)
+        }
+
+        for ((name, source) in sharedModules) {
+            registerLoader(name, source, "@$name")
+        }
+        for ((name, source) in target.modules) {
+            if (name.startsWith("sleepwalker.") || name == "sleepwalker") {
+                throw IllegalArgumentException("Package local module '$name' shadows reserved namespace")
+            }
+            registerLoader(name, source, "@$name")
+        }
+
+        // Install require
         val requireCode = """
-function require(name)
-    local mod = __modules[name]
-    if mod == nil then
-        error("module '" .. name .. "' not found (bundled only)")
-    end
-    if type(mod) == "table" then
-        return mod
-    end
-    local result = mod()
-    __modules[name] = result or true
-    return result
-end
-""".trimIndent()
+            function require(name)
+                if __cache[name] ~= nil then
+                    return __cache[name]
+                end
+                if __loading_state[name] then
+                    error("circular dependency detected for module '" .. name .. "'")
+                end
+                local loader = __loaders[name]
+                if loader == nil then
+                    error("module '" .. name .. "' not found")
+                end
+                __loading_state[name] = true
+                local ok, result = pcall(loader)
+                __loading_state[name] = nil
+                if not ok then
+                    error("error loading module '" .. name .. "': " .. tostring(result))
+                end
+                if result == nil then
+                    result = true
+                end
+                __cache[name] = result
+                return result
+            end
+        """.trimIndent()
         val requireBuf = directBuffer(requireCode)
         try {
-            lua.load(requireBuf, "@require_setup")
+            L.load(requireBuf, "@require_setup")
         } catch (e: LuaException) {
             throw LuaLoadException("Failed to parse require setup: ${e.message}")
         }
         try {
-            lua.pCall(0, 0)
+            L.pCall(0, 0)
         } catch (e: LuaException) {
             throw LuaLoadException("Failed to run require setup: ${e.message}")
         }
-    }
 
-    /**
-     * Pre-compile each bundled module and store the resulting closure
-     * in the `__modules` global table. The Lua `require` function
-     * invokes these closures directly — no global `load` call needed.
-     */
-    private fun precompilePackageModules(pkg: TargetPackage) {
-        for ((name, source) in pkg.modules) {
-            val buf = directBuffer(source)
-            try {
-                lua.load(buf, "@$name")
-            } catch (e: LuaException) {
-                throw LuaLoadException("Failed to compile module '$name': ${e.message}")
-            }
-            // Compiled function is at stack top; store in __modules[name]
-            lua.getGlobal("__modules")
-            // Stack: [fn, modules]
-            lua.pushValue(-2) // copy fn to top
-            // Stack: [fn, modules, fn_copy]
-            lua.setField(-2, name) // modules[name] = fn_copy; pops fn_copy
-            // Stack: [fn, modules]
-            lua.pop(1) // pop modules
-            // Stack: [fn]
-            lua.pop(1) // pop fn
-            // Stack: []
-        }
-    }
-
-    // ── Host ABI table registration ──
-
-    private fun registerHostFunctions() {
-        lua.createTable(0, 7) // host table, pre-allocate 7 hash entries
-
-        // host.abi_version() → int
-        lua.push(JFunction { L ->
-            L.push(TargetPackage.HOST_ABI_VERSION.toLong())
-            1
-        })
-        lua.setField(-2, "abi_version")
-
-        // host.describe() → { name, charset, line_model, mode, target, target_pin }
-        val desc = targetDescription
-        lua.push(JFunction { L ->
-            L.newTable()
-            L.push(desc["name"] ?: ""); L.setField(-2, "name")
-            L.push(desc["charset"] ?: ""); L.setField(-2, "charset")
-            L.push(desc["line_model"] ?: ""); L.setField(-2, "line_model")
-            L.push(desc["mode"] ?: ""); L.setField(-2, "mode")
-            L.push(desc["target"] ?: ""); L.setField(-2, "target")
-            L.push(desc["target_pin"] ?: ""); L.setField(-2, "target_pin")
-            1
-        })
-        lua.setField(-2, "describe")
-
-        // host.ctrl(keyName) → int
-        lua.push(JFunction { L ->
-            val name = L.toString(1) ?: error("ctrl: missing argument")
-            val builder = currentBuilder ?: error("no active plan builder")
-            val count = builder.ctrl(name)
-            L.push(count.toLong())
-            1
-        })
-        lua.setField(-2, "ctrl")
-
-        // host.key_tap(name) → int
-        lua.push(JFunction { L ->
-            val name = L.toString(1) ?: error("key_tap: missing argument")
-            val builder = currentBuilder ?: error("no active plan builder")
-            val count = builder.keyTap(name)
-            L.push(count.toLong())
-            1
-        })
-        lua.setField(-2, "key_tap")
-
-        // host.key_down(name) → int
-        lua.push(JFunction { L ->
-            val name = L.toString(1) ?: error("key_down: missing argument")
-            val builder = currentBuilder ?: error("no active plan builder")
-            val count = builder.keyDown(name)
-            L.push(count.toLong())
-            1
-        })
-        lua.setField(-2, "key_down")
-
-        // host.key_up(name) → int
-        lua.push(JFunction { L ->
-            val name = L.toString(1) ?: error("key_up: missing argument")
-            val builder = currentBuilder ?: error("no active plan builder")
-            val count = builder.keyUp(name)
-            L.push(count.toLong())
-            1
-        })
-        lua.setField(-2, "key_up")
-
-        // host.text_plan(text) → int
-        lua.push(JFunction { L ->
-            val text = L.toString(1) ?: error("text_plan: missing argument")
-            val builder = currentBuilder ?: error("no active plan builder")
-            val count = builder.textPlan(text)
-            L.push(count.toLong())
-            1
-        })
-        lua.setField(-2, "text_plan")
-
-        lua.setGlobal("host")
-    }
-
-    // ── Planning invocation ──
-
-    /**
-     * Compute a transition plan and predicted next state.
-     *
-     * Deep-copies [state] into an invocation-local Lua table, calls the
-     * target's `plan` function, and collects ops emitted through host
-     * ABI functions into [PlanBuilder].
-     *
-     *   plan(current, desired, lcp, oldMid, newMid, state, predictedPoint)
-     *       → nextState | nil, structuredError
-     *
-     * Returns [TransitionResult.success] with ops and nextState, or
-     * [TransitionResult.failure] with a [FailureClassification].
-     */
-    fun planTransition(
-        current: String,
-        desired: String,
-        lcp: Int,
-        oldMid: String,
-        newMid: String,
-        state: ReadlineProgramState,
-    ): TransitionResult {
-        if (!initialized) {
-            return TransitionResult.failure(
-                FailureClassification.PlanningError("Lua host not initialized")
-            )
-        }
-
-        if (hasPlanned) {
-            resetInvocationEnvironment()
-        }
-        hasPlanned = true
-
-        val builder = PlanBuilder(hid, textPlanner, profile)
-        currentBuilder = builder
-
-        try {
-            // Resolve the Lua plan function
-            lua.getGlobal("plan")
-            if (lua.isNil(-1)) {
-                lua.pop(1)
-                return TransitionResult.failure(
-                    FailureClassification.PlanningError("plan function not found in target")
-                )
+        // 5. Expose sleepwalker.cost.text_cost
+        L.newTable() // sleepwalker table
+        L.newTable() // cost table
+        L.push(JFunction { L_fn ->
+            val text = L_fn.toString(1)
+            if (text == null) {
+                L_fn.pushNil()
+                L_fn.push(layoutId)
+                L_fn.push(costMetricId)
+                return@JFunction 3
             }
 
-            // Push transition context, explicit state, and predicted point.
-            lua.push(current)
-            lua.push(desired)
-            lua.push(lcp.toLong())
-            lua.push(oldMid)
-            lua.push(newMid)
-
-            // Push state table (deep copy)
-            lua.newTable()
-            lua.push(state.buffer); lua.setField(-2, "buffer")
-            lua.push(state.point.toLong()); lua.setField(-2, "point")
-            lua.push(state.revision); lua.setField(-2, "revision")
-            lua.push((lcp + newMid.length).toLong())
-
-            // Request two results so a target rejection retains its reason.
-            lua.pCall(7, 2)
-
-            if (lua.isNil(-2)) {
-                val message = lua.toString(-1) ?: "Target rejected the transition"
-                lua.pop(2)
-                return TransitionResult.failure(classifyTargetFailure(message, desired))
+            val plan = if (compileCache == null) {
+                costTextPlanner.plan(text, profile)
+            } else {
+                val cached = compileCache[text]
+                if (cached != null) {
+                    TextPlan(plan = cached, failure = null)
+                } else {
+                    val p = costTextPlanner.plan(text, profile)
+                    if (p.ok) {
+                        compileCache[text] = p.plan!!
+                    }
+                    p
+                }
             }
 
-            val nextState = readProgramState(lua, -2)
-            lua.pop(2)
-            return TransitionResult.success(builder.ops, nextState)
-        } catch (e: LuaException) {
-            return TransitionResult.failure(
-                FailureClassification.PlanningError(e.message ?: e.toString())
-            )
-        } finally {
-            currentBuilder = null
-        }
-    }
-
-    // ── Lua state helpers ──
-
-    private fun readProgramState(L: Lua54, index: Int): ReadlineProgramState {
-        val absIdx = if (index < 0) L.getTop() + index + 1 else index
-
-        L.getField(absIdx, "buffer")
-        val buffer = if (L.isNil(-1)) "" else L.toString(-1) ?: ""
-        L.pop(1)
-
-        L.getField(absIdx, "point")
-        val point = if (L.isNil(-1)) 0 else L.toInteger(-1).toInt()
-        L.pop(1)
-
-        L.getField(absIdx, "revision")
-        val revision = if (L.isNil(-1)) 0L else L.toInteger(-1)
-        L.pop(1)
-
-        return ReadlineProgramState(buffer, point, revision)
+            if (plan.ok) {
+                L_fn.push(plan.plan!!.size.toLong())
+            } else {
+                L_fn.pushNil()
+            }
+            L_fn.push(layoutId)
+            L_fn.push(costMetricId)
+            3
+        })
+        L.setField(-2, "text_cost")
+        L.setField(-2, "cost")
+        L.setGlobal("sleepwalker")
     }
 
     private fun classifyTargetFailure(
@@ -385,117 +354,28 @@ end
                 expected = desired,
                 predicted = message.substringAfter(':').trim(),
             )
+        message.startsWith("UnrepresentableContent:") -> {
+            val content = message.substringAfter(':').trim()
+            val ch = if (content.isNotEmpty()) content[0] else '?'
+            FailureClassification.UnrepresentableContent(ch)
+        }
         else -> FailureClassification.PlanningError(message)
     }
 
     override fun close() {
-        if (initialized) {
-            lua.close()
-            loadedPackage = null
-            hasPlanned = false
-            initialized = false
-        }
+        // VMs are fresh and discarded per invocation
+    }
+
+    private object NonAllocatingHid : LowLevelHid {
+        override fun nextSeqId(): Int = 0
+        override fun arm(seqId: Int): LowLevelOp = LowLevelOp(Opcodes.ARM, byteArrayOf(), seqId)
+        override fun disarm(seqId: Int): LowLevelOp = LowLevelOp(Opcodes.DISARM, byteArrayOf(), seqId)
+        override fun kill(seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KILL, byteArrayOf(), seqId)
+        override fun releaseAll(seqId: Int): LowLevelOp = LowLevelOp(Opcodes.RELEASE_ALL, byteArrayOf(), seqId)
+        override fun keyTap(usage: HidUsage, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KEY_TAP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+        override fun keyDown(usage: HidUsage, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KEY_DOWN, byteArrayOf(usage.usbUsage.toByte()), seqId)
+        override fun keyUp(usage: HidUsage, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KEY_UP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+        override fun keyboardTapScript(taps: List<Pair<Byte, Byte>>, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KEYBOARD_TAP_SCRIPT, byteArrayOf(), seqId)
+        override fun mouseRelReport(buttons: Int, dx: Int, dy: Int, wheel: Int, pan: Int, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.MOUSE_REL_REPORT, byteArrayOf(), seqId)
     }
 }
-
-// ── Internal types ──
-
-/**
- * Accumulates [LowLevelOp]s emitted by Lua host ABI functions during
- * a single [LuaHostAdapter.planTransition] invocation.
- */
-internal class PlanBuilder(
-    private val hid: LowLevelHid,
-    private val textPlanner: TextPlanner,
-    private val profile: HostProfile = HostProfile.LINUX_US,
-) {
-    private val _ops = mutableListOf<LowLevelOp>()
-
-    /** Immutable snapshot of accumulated ops. */
-    val ops: List<LowLevelOp> get() = _ops.toList()
-
-    /** Emit a modifier‑aware keyboard tap by symbolic usage name. */
-    fun keyTap(name: String): Int {
-        rejectF24(name)
-        _ops.add(hid.keyTap(Usages.byName(name)))
-        return _ops.size
-    }
-
-    /** Press a key down (no automatic release). */
-    fun keyDown(name: String): Int {
-        rejectF24(name)
-        _ops.add(hid.keyDown(Usages.byName(name)))
-        return _ops.size
-    }
-
-    /** Release a key. */
-    fun keyUp(name: String): Int {
-        rejectF24(name)
-        _ops.add(hid.keyUp(Usages.byName(name)))
-        return _ops.size
-    }
-
-    /**
-     * Emit a control chord: ctrl-down, key_tap(keyName), ctrl-up.
-     * [keyName] is a short key name ("A", "B", …) — not a USB usage
-     * name. The adapter prepends `USB_KEY_` before lookup.
-     */
-    fun ctrl(keyName: String): Int {
-        val usageName = "USB_KEY_$keyName"
-        rejectF24(usageName)
-        val usage = Usages.byName(usageName)
-        _ops.add(hid.keyDown(Usages.USB_KEY_LEFTCTRL))
-        _ops.add(hid.keyTap(usage))
-        _ops.add(hid.keyUp(Usages.USB_KEY_LEFTCTRL))
-        return _ops.size
-    }
-
-    /**
-     * Delegate printable text to [TextPlanner].
-     * Throws [IllegalArgumentException] on unrepresentable content.
-     */
-    fun textPlan(text: String): Int {
-        val plan = textPlanner.plan(text, profile)
-        if (!plan.ok) {
-            val failure = plan.failure!!
-            val msg = when (failure) {
-                is TextRenderingFailure.MissingLayout ->
-                    "missing layout: ${failure.profile}"
-                is TextRenderingFailure.UnrepresentableGlyph ->
-                    "unrepresentable glyph: '${failure.ch}'"
-                else -> "text planning failed"
-            }
-            throw IllegalArgumentException(msg)
-        }
-        _ops.addAll(plan.plan!!)
-        return _ops.size
-    }
-
-    private fun rejectF24(name: String) {
-        if (name == "USB_KEY_F24" || name == "F24") {
-            throw IllegalArgumentException(
-                "F24 is reserved for synchronization and unavailable to target packages"
-            )
-        }
-    }
-}
-
-/** Result of a single [LuaHostAdapter.planTransition] call. */
-data class TransitionResult(
-    val ops: List<LowLevelOp>,
-    val nextState: ReadlineProgramState?,
-    val failure: FailureClassification?,
-) {
-    val ok: Boolean get() = failure == null && nextState != null
-
-    companion object {
-        fun success(ops: List<LowLevelOp>, state: ReadlineProgramState) =
-            TransitionResult(ops, state, null)
-
-        fun failure(fc: FailureClassification) =
-            TransitionResult(emptyList(), null, fc)
-    }
-}
-
-/** Thrown when loading Lua source code fails. */
-class LuaLoadException(message: String) : RuntimeException(message)

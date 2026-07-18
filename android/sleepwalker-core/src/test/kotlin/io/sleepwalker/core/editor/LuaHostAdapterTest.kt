@@ -1,8 +1,6 @@
 package io.sleepwalker.core.editor
 
 import io.sleepwalker.core.keymap.HostProfile
-import io.sleepwalker.core.keymap.SeedKeymapDatabase
-import io.sleepwalker.core.protocol.Usages
 import io.sleepwalker.core.text.TextPlanner
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,298 +9,238 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class LuaHostAdapterTest {
-    @Test fun allowlisted_lua_libraries_can_compute_a_deterministic_transition() {
-        val source = """
-            function plan(current, desired, lcp, oldMid, newMid, state)
-                local rendered = table.concat({string.upper("o"), string.upper("k")})
-                if rendered ~= "OK" or math.abs(-1) ~= 1 or type(assert) ~= "function" then
-                    error("allowlisted library unavailable")
-                end
-                return { buffer = desired, point = #desired, revision = state.revision + 1 }
-            end
-        """.trimIndent()
-        val hid = RecordingHid()
-
-        LuaHostAdapter(hid, TextPlanner(SeedKeymapDatabase, hid)).use { adapter ->
-            adapter.initialize(EditorTestFixtures.target(mainLua = source))
-            val result = adapter.planTransition("", "OK", 0, "", "OK", ReadlineProgramState())
-
-            assertTrue(result.ok)
-            assertEquals("OK", result.nextState!!.buffer)
-        }
-    }
-
-    @Test fun forbidden_lua_capabilities_fail_before_emitting_hid_operations() {
-        val forbiddenExpressions = listOf(
-            "java",
-            "io",
-            "os",
-            "debug",
-            "package",
-            "load",
-            "dofile",
-            "loadfile",
-            "math.random",
-        )
-
-        for (expression in forbiddenExpressions) {
-            val source = """
-                function plan(current, desired, lcp, oldMid, newMid, state)
-                    if $expression ~= nil then
-                        error("forbidden capability was reachable: $expression")
-                    end
-                    local inaccessible = ($expression).unavailable
-                    host.key_tap("USB_KEY_A")
-                    return { buffer = desired, point = #desired, revision = state.revision + 1 }
-                end
-            """.trimIndent()
-            val hid = RecordingHid()
-
-            LuaHostAdapter(hid, TextPlanner(SeedKeymapDatabase, hid)).use { adapter ->
-                adapter.initialize(EditorTestFixtures.target(mainLua = source))
-                val result = adapter.planTransition("", "safe", 0, "", "safe", ReadlineProgramState())
-
-                assertFalse(expression, result.ok)
-                assertTrue(expression, result.failure is FailureClassification.PlanningError)
-                val failure = result.failure as FailureClassification.PlanningError
-                assertFalse(expression, failure.reason.contains("forbidden capability was reachable"))
-                assertTrue(expression, hid.calls.isEmpty())
-            }
-        }
-    }
-
-    @Test fun require_resolves_declared_modules_only_and_refuses_parent_paths() {
-        val bundledSource = """
-            local formatter = require("formatter")
-            function plan(current, desired, lcp, oldMid, newMid, state)
+    @Test fun fresh_vm_discards_global_and_module_mutation_between_identical_plans() {
+        val target = EditorTestFixtures.target(
+            mainLua = """
+                local module_state = require("stateful")
                 return {
-                    buffer = formatter.render(desired),
-                    point = #desired,
-                    revision = state.revision + 1,
+                    abi_version = 1,
+                    initialize = function(_) return { revision = 0 } end,
+                    plan = function(current, desired, state)
+                        global_count = (global_count or 0) + 1
+                        module_state.count = module_state.count + 1
+                        return {
+                            actions = {},
+                            next_state = { global_count = global_count, module_count = module_state.count },
+                        }
+                    end,
                 }
-            end
-        """.trimIndent()
-        val bundledModule = """
-            return { render = function(value) return string.upper(value) end }
-        """.trimIndent()
-        val hid = RecordingHid()
-
-        LuaHostAdapter(hid, TextPlanner(SeedKeymapDatabase, hid)).use { adapter ->
-            adapter.initialize(
-                EditorTestFixtures.target(
-                    mainLua = bundledSource,
-                    modules = mapOf("formatter" to bundledModule),
-                ),
-            )
-            val result = adapter.planTransition("", "SAFE", 0, "", "SAFE", ReadlineProgramState())
-            assertTrue(result.ok)
-            assertEquals("SAFE", result.nextState!!.buffer)
-        }
-
-        for (unbundledName in listOf("not-bundled", "../outside")) {
-            val source = "require(\"$unbundledName\")"
-            val unbundledHid = RecordingHid()
-            val adapter = LuaHostAdapter(
-                unbundledHid,
-                TextPlanner(SeedKeymapDatabase, unbundledHid),
-            )
-            try {
-                adapter.initialize(EditorTestFixtures.target(mainLua = source))
-                fail("$unbundledName must not resolve outside declared package modules")
-            } catch (_: LuaLoadException) {
-                // The custom require rejects the unresolved module during target initialization.
-            } finally {
-                adapter.close()
-            }
-        }
-    }
-
-    @Test fun incompatible_host_abi_is_refused_before_lua_program_loads() {
-        val hid = RecordingHid()
-        val adapter = LuaHostAdapter(
-            hid,
-            TextPlanner(SeedKeymapDatabase, hid),
+            """.trimIndent(),
+            modules = mapOf("stateful" to "return { count = 0 }"),
         )
-        try {
-            adapter.initialize(
-                EditorTestFixtures.target(hostAbi = TargetPackage.HOST_ABI_VERSION + 1),
-            )
-            fail("an incompatible target ABI must be refused")
-        } catch (_: IllegalStateException) {
-            // The adapter's ABI guard is the JVM-reachable package-loading seam.
-        } finally {
-            adapter.close()
-        }
-    }
-
-    @Test fun invocation_state_is_deep_copied_and_replay_does_not_leak_mutation() {
-        val source = """
-            function plan(current, desired, lcp, oldMid, newMid, state)
-                state.buffer = state.buffer .. "!"
-                state.point = state.point + 1
-                state.revision = state.revision + 1
-                return state
-            end
-        """.trimIndent()
-        val input = ReadlineProgramState(buffer = "seed", point = 2, revision = 7)
         val hid = RecordingHid()
+        val adapter = adapter(hid)
 
-        LuaHostAdapter(hid, TextPlanner(SeedKeymapDatabase, hid)).use { adapter ->
-            adapter.initialize(EditorTestFixtures.target(mainLua = source))
-            val first = adapter.planTransition("seed", "seed!", 4, "", "!", input)
-            val second = adapter.planTransition("seed", "seed!", 4, "", "!", input)
+        val first = adapter.runPlan(target, "same", "same", AbiValue.Obj(emptyMap()), HostProfile.LINUX_US)
+        val second = adapter.runPlan(target, "same", "same", AbiValue.Obj(emptyMap()), HostProfile.LINUX_US)
 
-            val expected = ReadlineProgramState(buffer = "seed!", point = 3, revision = 8)
-            assertEquals(expected, first.nextState)
-            assertEquals(expected, second.nextState)
-            assertEquals(ReadlineProgramState(buffer = "seed", point = 2, revision = 7), input)
-            assertTrue(hid.calls.isEmpty())
-        }
-    }
-
-    @Test fun invocation_recreates_lua_environment_before_replaying_identical_explicit_state() {
-        val source = """
-            local invocation = 0
-            local function nextInvocation()
-                invocation = invocation + 1
-                return invocation
-            end
-
-            function plan(current, desired, lcp, oldMid, newMid, state)
-                local count = nextInvocation()
-                state.buffer = state.buffer .. "#" .. count
-                state.point = state.point + count
-                state.revision = state.revision + count
-                return state
-            end
-        """.trimIndent()
-        val input = ReadlineProgramState(buffer = "seed", point = 2, revision = 7)
-        val hid = RecordingHid()
-
-        LuaHostAdapter(hid, TextPlanner(SeedKeymapDatabase, hid)).use { adapter ->
-            adapter.initialize(EditorTestFixtures.target(mainLua = source))
-            val first = adapter.planTransition("seed", "seed#1", 4, "", "#1", input)
-            val second = adapter.planTransition("seed", "seed#1", 4, "", "#1", input)
-
-            val expected = ReadlineProgramState(buffer = "seed#1", point = 3, revision = 8)
-            assertEquals(expected, first.nextState)
-            assertEquals(expected, second.nextState)
-            assertEquals(ReadlineProgramState(buffer = "seed", point = 2, revision = 7), input)
-            assertTrue(hid.calls.isEmpty())
-        }
-    }
-
-    @Test fun readline_chords_follow_home_then_forward_and_delegate_printable_text() {
-        val source = """
-            function plan(current, desired, lcp, oldMid, newMid, state)
-                local s = { buffer = state.buffer, point = state.point, revision = state.revision }
-                host.ctrl("A")
-                s.point = 0
-                for _ = 1, lcp do
-                    host.ctrl("F")
-                    s.point = s.point + 1
-                end
-                for _ = 1, #oldMid do
-                    host.ctrl("D")
-                    s.buffer = string.sub(s.buffer, 1, s.point) .. string.sub(s.buffer, s.point + 2)
-                end
-                if #newMid > 0 then
-                    host.text_plan(newMid)
-                    s.buffer = string.sub(s.buffer, 1, s.point) .. newMid .. string.sub(s.buffer, s.point + 1)
-                    s.point = s.point + #newMid
-                end
-                s.revision = s.revision + 1
-                return s
-            end
-        """.trimIndent()
-        val hid = RecordingHid()
-
-        LuaHostAdapter(hid, TextPlanner(SeedKeymapDatabase, hid)).use { adapter ->
-            adapter.initialize(EditorTestFixtures.target(mainLua = source))
-            val result = adapter.planTransition(
-                current = "abcdef",
-                desired = "abXYef",
-                lcp = 2,
-                oldMid = "cd",
-                newMid = "XY",
-                state = ReadlineProgramState(buffer = "abcdef", point = 6, revision = 4),
-            )
-
-            assertTrue(result.ok)
-            assertEquals(ReadlineProgramState("abXYef", 4, 5), result.nextState)
-            val replay = adapter.planTransition(
-                current = "abcdef",
-                desired = "abXYef",
-                lcp = 2,
-                oldMid = "cd",
-                newMid = "XY",
-                state = ReadlineProgramState(buffer = "abcdef", point = 6, revision = 4),
-            )
-            assertEquals(result.nextState, replay.nextState)
-            assertEquals(
-                result.ops.map { op -> op.opcode to op.payload.toList() },
-                replay.ops.map { op -> op.opcode to op.payload.toList() },
-            )
-            assertEquals(
-                listOf(
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                    Usages.USB_KEY_A.usbUsage,
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                    Usages.USB_KEY_F.usbUsage,
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                    Usages.USB_KEY_F.usbUsage,
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                    Usages.USB_KEY_D.usbUsage,
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                    Usages.USB_KEY_D.usbUsage,
-                    Usages.USB_KEY_LEFTCTRL.usbUsage,
-                ),
-                result.ops.take(15).map { it.payload.single().toInt() and 0xFF },
-            )
-            assertFalse(result.ops.any { op ->
-                op.payload.singleOrNull()?.toInt()?.and(0xFF) == Usages.USB_KEY_F24.usbUsage
-            })
-        }
-    }
-
-    @Test fun approved_backward_delete_chord_is_available_but_f24_is_reserved() {
-        val hid = RecordingHid()
-        val builder = PlanBuilder(hid, TextPlanner(SeedKeymapDatabase, hid), HostProfile.LINUX_US)
-
-        builder.ctrl("H")
+        assertEquals(first, second)
         assertEquals(
-            listOf(
-                Usages.USB_KEY_LEFTCTRL.usbUsage,
-                Usages.USB_KEY_H.usbUsage,
-                Usages.USB_KEY_LEFTCTRL.usbUsage,
+            AbiValue.Obj(mapOf("global_count" to AbiValue.Int64(1), "module_count" to AbiValue.Int64(1))),
+            first.success().nextState,
+        )
+        assertTrue("planning must not construct HID operations", hid.calls.isEmpty())
+    }
+
+    @Test fun require_caches_table_and_scalar_exports_within_one_invocation() {
+        val target = EditorTestFixtures.target(
+            mainLua = """
+                local table_first = require("table_export")
+                local table_second = require("table_export")
+                local number_first = require("number_export")
+                local number_second = require("number_export")
+                local string_first = require("string_export")
+                local string_second = require("string_export")
+                local true_first = require("true_export")
+                local true_second = require("true_export")
+                local false_first = require("false_export")
+                local false_second = require("false_export")
+                return {
+                    abi_version = 1,
+                    initialize = function(_) return {} end,
+                    plan = function(current, desired, state)
+                        if table_first ~= table_second or number_first ~= number_second or
+                           string_first ~= string_second or true_first ~= true_second or
+                           false_first ~= false_second then
+                            error("module cache changed an export")
+                        end
+                        return { actions = {}, next_state = { false_loads = false_loads } }
+                    end,
+                }
+            """.trimIndent(),
+            modules = mapOf(
+                "table_export" to "return {}",
+                "number_export" to "return 7",
+                "string_export" to "return 'cached'",
+                "true_export" to "return true",
+                "false_export" to "false_loads = (false_loads or 0) + 1; return false",
             ),
-            hid.calls.map { it.payload.single().toInt() and 0xFF },
         )
 
-        val f24Operations: List<Pair<String, (PlanBuilder) -> Unit>> = listOf(
-            "tap" to { it.keyTap("USB_KEY_F24") },
-            "down" to { it.keyDown("USB_KEY_F24") },
-            "up" to { it.keyUp("USB_KEY_F24") },
-            "ctrl" to { it.ctrl("F24") },
-        )
-        for ((name, operation) in f24Operations) {
-            val f24Hid = RecordingHid()
-            try {
-                operation(
-                    PlanBuilder(
-                        f24Hid,
-                        TextPlanner(SeedKeymapDatabase, f24Hid),
-                        HostProfile.LINUX_US,
+        val result = adapter(RecordingHid()).runPlan(
+            target,
+            "same",
+            "same",
+            AbiValue.Obj(emptyMap()),
+            HostProfile.LINUX_US,
+        ).success()
+
+        assertEquals(AbiValue.Int64(1), (result.nextState as AbiValue.Obj).fields.getValue("false_loads"))
+    }
+
+    @Test fun module_loader_rejects_missing_reserved_shadow_and_cyclic_dependencies() {
+        data class Case(val name: String, val target: TargetPackage, val expectedMessage: String)
+
+        val cases = listOf(
+            Case(
+                "missing module",
+                EditorTestFixtures.target(
+                    mainLua = moduleRequiringProgram("missing"),
+                ),
+                "not found",
+            ),
+            Case(
+                "reserved namespace shadow",
+                EditorTestFixtures.target(
+                    modules = mapOf("sleepwalker.cost" to "return {}"),
+                ),
+                "shadows reserved namespace",
+            ),
+            Case(
+                "cycle",
+                EditorTestFixtures.target(
+                    mainLua = moduleRequiringProgram("first"),
+                    modules = mapOf(
+                        "first" to "local second = require('second'); return second",
+                        "second" to "local first = require('first'); return first",
                     ),
-                )
-                fail("F24 $name must never enter a production editor plan")
-            } catch (_: IllegalArgumentException) {
-                assertTrue(f24Hid.calls.isEmpty())
-            }
+                ),
+                "circular dependency",
+            ),
+        )
+
+        cases.forEach { case ->
+            val failure = adapter(RecordingHid()).runPlan(
+                case.target,
+                "same",
+                "same",
+                AbiValue.Obj(emptyMap()),
+                HostProfile.LINUX_US,
+            ).failure()
+            assertTrue(case.name, failure is FailureClassification.PlanningError)
+            assertTrue(case.name, (failure as FailureClassification.PlanningError).reason.contains(case.expectedMessage))
         }
     }
+
+    @Test fun planner_returns_inert_data_for_identical_inputs_without_host_action_effects() {
+        val target = EditorTestFixtures.target(
+            mainLua = EditorTestFixtures.packageProgram(
+                initializer = "{ revision = 0 }",
+                planner = """
+                    return {
+                        actions = { { kind = "tap", usage = "USB_KEY_A" } },
+                        next_state = { revision = state.revision + 1 },
+                    }
+                """.trimIndent(),
+            ),
+        )
+        val hid = RecordingHid()
+        val adapter = adapter(hid)
+
+        val first = adapter.runPlan(target, "a", "b", AbiValue.Obj(mapOf("revision" to AbiValue.Int64(3))), HostProfile.LINUX_US)
+        val second = adapter.runPlan(target, "a", "b", AbiValue.Obj(mapOf("revision" to AbiValue.Int64(3))), HostProfile.LINUX_US)
+
+        assertEquals(first, second)
+        assertEquals(listOf(SymbolicAction.Tap("USB_KEY_A")), first.success().actions)
+        assertTrue("decoding symbolic actions must not allocate low-level operations", hid.calls.isEmpty())
+        assertTrue("planning must not allocate sequence IDs", hid.issuedSequenceIds.isEmpty())
+    }
+
+    @Test fun text_cost_is_layout_pinned_unrepresentable_is_inert_and_reuses_one_cached_compilation() {
+        val target = EditorTestFixtures.target(
+            mainLua = """
+                local cost = require("sleepwalker.cost")
+                return {
+                    abi_version = 1,
+                    initialize = function(_) return { revision = 0 } end,
+                    plan = function(current, desired, state)
+                        local first, layout_one, metric_one = cost.text_cost(desired)
+                        local second, layout_two, metric_two = cost.text_cost(desired)
+                        if first ~= second or layout_one ~= layout_two or metric_one ~= metric_two then
+                            error("text cost is not deterministic")
+                        end
+                        return {
+                            actions = {},
+                            next_state = {
+                                cost = first,
+                                representable = first ~= nil,
+                                layout = layout_one,
+                                metric = metric_one,
+                            },
+                        }
+                    end,
+                }
+            """.trimIndent(),
+        )
+        val hid = RecordingHid()
+
+        val represented = adapter(hid, sharedModules = costModule()).runPlan(
+            target,
+            "same",
+            "same",
+            AbiValue.Obj(emptyMap()),
+            HostProfile.LINUX_US,
+        ).success()
+
+        assertTrue((represented.nextState as AbiValue.Obj).fields.getValue("cost") is AbiValue.Int64)
+        assertEquals(AbiValue.Str(HostProfile.LINUX_US.key), (represented.nextState as AbiValue.Obj).fields.getValue("layout"))
+        assertEquals(AbiValue.Str("op_count:1"), (represented.nextState as AbiValue.Obj).fields.getValue("metric"))
+        assertEquals(setOf("same"), represented.compileCache.keys)
+        assertTrue("text_cost must not emit actions", hid.calls.isEmpty())
+        assertTrue("text_cost must not allocate sequence IDs", hid.issuedSequenceIds.isEmpty())
+
+        val unrepresentable = adapter(RecordingHid(), sharedModules = costModule()).runPlan(
+            target,
+            "same",
+            "☃",
+            AbiValue.Obj(emptyMap()),
+            HostProfile.LINUX_US,
+        ).success().nextState as AbiValue.Obj
+        assertEquals(AbiValue.Bool(false), unrepresentable.fields.getValue("representable"))
+        assertEquals(AbiValue.Str(HostProfile.LINUX_US.key), unrepresentable.fields.getValue("layout"))
+        assertEquals(AbiValue.Str("op_count:1"), unrepresentable.fields.getValue("metric"))
+    }
+
+    private fun moduleRequiringProgram(module: String): String = """
+        local dependency = require("$module")
+        return {
+            abi_version = 1,
+            initialize = function(_) return {} end,
+            plan = function(current, desired, state)
+                return { actions = {}, next_state = state }
+            end,
+        }
+    """.trimIndent()
+
+    private fun costModule(): Map<String, String> = mapOf(
+        "sleepwalker.cost" to """
+            return {
+                text_cost = function(text)
+                    return sleepwalker.cost.text_cost(text)
+                end,
+            }
+        """.trimIndent(),
+    )
+
+    private fun adapter(
+        hid: RecordingHid,
+        sharedModules: Map<String, String> = emptyMap(),
+    ): LuaHostAdapter = LuaHostAdapter(hid, TextPlanner(hid = hid), sharedModules)
+
+    private fun LuaInvocationResult.success(): LuaInvocationResult.Success =
+        this as? LuaInvocationResult.Success ?: fail("expected successful Lua invocation, got $this").let { error("unreachable") }
+
+    private fun LuaInvocationResult.failure(): FailureClassification =
+        (this as? LuaInvocationResult.Failure)?.classification
+            ?: fail("expected Lua planning failure, got $this").let { error("unreachable") }
 }

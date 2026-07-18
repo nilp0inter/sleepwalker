@@ -1,6 +1,6 @@
 return {
     id = "readline-emacs-ascii",
-    version = "1.0.0",
+    version = "2.0.0",
     host_abi = 1,
     target = "gnu-readline",
     target_pin = "8.2",

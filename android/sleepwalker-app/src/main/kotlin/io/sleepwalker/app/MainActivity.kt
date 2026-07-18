@@ -454,8 +454,7 @@ class MainActivity : AppCompatActivity() {
                         
                         when (editorResult) {
                             is EditorResult.Synced -> {
-                                val revision = snapshot?.predictedRevision ?: 0L
-                                feedbackText.text = "Synced change #$revision (id ${result.id}): '$requestedText'"
+                                feedbackText.text = "Synced change (id ${result.id}): '$requestedText'"
                             }
                             is EditorResult.EditorFailure -> {
                                 val classificationName = editorResult.classification.javaClass.simpleName

@@ -7,50 +7,48 @@ import io.sleepwalker.core.protocol.Opcodes
 
 internal object EditorTestFixtures {
     fun target(
-        mainLua: String = passThroughProgram(),
+        mainLua: String = packageProgram(
+            initializer = "{ revision = 0 }",
+            planner = "return { actions = {}, next_state = state }",
+        ),
         hostAbi: Int = TargetPackage.HOST_ABI_VERSION,
         modules: Map<String, String> = emptyMap(),
     ): TargetPackage = TargetPackage(
-        id = "test-readline",
+        id = "test-target",
         version = "test",
         hostAbi = hostAbi,
-        target = "gnu-readline",
+        target = "test-target",
         targetPin = "test",
-        mode = "emacs",
-        charset = "ascii-printable",
-        lineModel = "single-line",
-        description = mapOf(
-            "name" to "Test Readline",
-            "charset" to "ascii-printable",
-            "line_model" to "single-line",
-            "mode" to "emacs",
-            "target" to "gnu-readline",
-            "target_pin" to "test",
-        ),
+        mode = "test",
+        charset = "test",
+        lineModel = "test",
         mainLua = mainLua,
         modules = modules,
+        sourceHash = "test-source",
     )
 
-    fun passThroughProgram(): String = """
-        function plan(current, desired, lcp, oldMid, newMid, state)
-            if #newMid > 0 then
-                host.text_plan(newMid)
-            end
-            return {
-                buffer = desired,
-                point = lcp + #newMid,
-                revision = state.revision + 1,
-            }
-        end
+    fun packageProgram(initializer: String, planner: String): String = """
+        return {
+            abi_version = 1,
+            initialize = function(current)
+                return $initializer
+            end,
+            plan = function(current, desired, state)
+                $planner
+            end,
+        }
     """.trimIndent()
 }
 
 internal class RecordingHid : LowLevelHid {
     private var nextSequenceId = 1
     val calls = mutableListOf<LowLevelOp>()
-    var onOperation: ((LowLevelOp) -> Unit)? = null
+    val issuedSequenceIds = mutableListOf<Int>()
 
-    override fun nextSeqId(): Int = nextSequenceId++
+    override fun nextSeqId(): Int = nextSequenceId.also { id ->
+        issuedSequenceIds += id
+        nextSequenceId += 1
+    }
 
     override fun arm(seqId: Int): LowLevelOp = operation(Opcodes.ARM, byteArrayOf(), seqId)
 
@@ -82,21 +80,16 @@ internal class RecordingHid : LowLevelHid {
     ): LowLevelOp = operation(Opcodes.MOUSE_REL_REPORT, byteArrayOf(), seqId)
 
     private fun operation(opcode: Int, payload: ByteArray, seqId: Int): LowLevelOp =
-        LowLevelOp(opcode, payload, seqId).also { op ->
-            calls += op
-            onOperation?.invoke(op)
-        }
+        LowLevelOp(opcode, payload, seqId).also(calls::add)
 }
 
 internal class RecordingEditorExecutor(
     private val outcomes: ArrayDeque<ExecutionOutcome>,
 ) : EditorExecutor {
     val submittedPlans = mutableListOf<List<LowLevelOp>>()
-    var onExecute: ((List<LowLevelOp>) -> Unit)? = null
 
     override fun execute(plan: List<LowLevelOp>): ExecutionOutcome {
         submittedPlans += plan
-        onExecute?.invoke(plan)
         return outcomes.removeFirst()
     }
 }

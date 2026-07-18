@@ -31,6 +31,7 @@ internal data class TargetPackage(
     val description: Map<String, String> = emptyMap(),
     val mainLua: String,
     val modules: Map<String, String> = emptyMap(),
+    val sourceHash: String,
 ) {
     companion object {
         /** Current host ABI version supported by this runtime. */

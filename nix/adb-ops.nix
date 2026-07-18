@@ -142,14 +142,23 @@ in
   sleepwalker-adb-set-text-encoded = mkAdb "sleepwalker-adb-set-text-encoded" ''
     TEXT_ENCODED="''${2:-}"
     SEQ="''${3:-0}"
+    OPAQUE_INPUT_STATE="''${4:-}"
+    CURRENT_TEXT_ENCODED="''${5:-}"
     TEXT_ENCODED_ARG="$TEXT_ENCODED"
     if [ -z "$TEXT_ENCODED_ARG" ]; then
       # adb shell joins argv into a remote shell command; an ordinary empty
       # argv element disappears and makes --es consume the following --ei.
       TEXT_ENCODED_ARG='""'
     fi
+    EXTRA_ARGS=()
+    if [ -n "$OPAQUE_INPUT_STATE" ]; then
+      EXTRA_ARGS+=(--es opaque_input_state "$OPAQUE_INPUT_STATE")
+    fi
+    if [ -n "$CURRENT_TEXT_ENCODED" ]; then
+      EXTRA_ARGS+=(--es current_text_encoded "$CURRENT_TEXT_ENCODED")
+    fi
     if OUT=$(${adb} "''${ADB_ARGS[@]}" shell am broadcast --receiver-foreground -a io.sleepwalker.app.COMMAND \
-      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd set-text --es text_encoded "$TEXT_ENCODED_ARG" --ei seq "$SEQ" 2>&1); then
+      -n io.sleepwalker.app/.adb.AdbCommandReceiver --es cmd set-text --es text_encoded "$TEXT_ENCODED_ARG" --ei seq "$SEQ" "''${EXTRA_ARGS[@]}" 2>&1); then
       printf '{"ok":true,"op":"set-text-encoded","text_encoded":"%s","seq":%s,"adb_out":%s}\n' "$TEXT_ENCODED" "$SEQ" "$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')"
     else
       RC=$?

@@ -5,6 +5,9 @@ import io.sleepwalker.core.hid.LowLevelOp
 import io.sleepwalker.core.keymap.HostProfile
 import io.sleepwalker.core.text.TextPlanner
 import io.sleepwalker.core.text.TextRenderingFailure
+import io.sleepwalker.core.protocol.Opcodes
+import io.sleepwalker.core.protocol.Usages
+import io.sleepwalker.core.protocol.HidUsage
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -13,44 +16,25 @@ import kotlin.concurrent.withLock
  * snapshot writes.
  *
  * The only public text-mutating operation is [setText], which accepts
- * a complete desired document snapshot. Internal state (assumed target
- * document, caret, program state, revision, synchronization lifecycle)
- * is hidden from callers.
- *
- * ## State machine
- *
- * ```
- * Uninitialized ──setText──▶ Planning ──plan ok──▶ Executing ──all acked──▶ Synced
- *                                │                      │
- *                                │ plan/abi fail        │ partial ack
- *                                ▼                      ▼
- *                              Failed                Unknown (terminal)
- * ```
- *
- * - **Failed**: pre-execution planning/validation failure. The target
- *   is untouched; the Editor is recoverable (next [setText] may succeed).
- * - **Unknown**: terminal. A plan began executing but did not complete.
- *   The Editor rejects all further [setText] calls until [reset].
- *
- * @property target   the loaded target behavior package.
- * @property executor the serialized executor that owns transport.
- * @property hid      the low-level HID primitive factory.
+ * a complete desired document snapshot. Internal state is hidden from callers.
  */
 class Editor internal constructor(
     private val target: TargetPackage,
     val executor: EditorExecutor,
     val hid: LowLevelHid,
+    private val sharedModules: Map<String, String>,
+    val policy: ExecutionPolicy = ExecutionPolicy.PRODUCTION,
+    val profile: HostProfile = HostProfile.LINUX_US,
 ) {
     val targetId: String get() = target.id
     val targetVersion: String get() = target.version
     private val textPlanner: TextPlanner = TextPlanner(hid = hid)
-    private val luaHost: LuaHostAdapter = LuaHostAdapter(hid, textPlanner)
+    private val luaHost: LuaHostAdapter = LuaHostAdapter(hid, textPlanner, sharedModules)
 
-    // ── Internal state (hidden from public surface) ──
-
+    // ── Internal state ──
     private var currentState: EditorState = EditorState.Uninitialized
     private var assumedDocument: String = ""
-    private var programState: ReadlineProgramState = ReadlineProgramState()
+    private var opaqueState: AbiValue = AbiValue.Null
     private var lastRetainedPlan: RetainedPlan? = null
     private var initializationFailure: FailureClassification? = null
     private val commandLane = ReentrantLock(true)
@@ -63,7 +47,7 @@ class Editor internal constructor(
             )
         } else {
             try {
-                luaHost.initialize(target)
+                opaqueState = luaHost.runInitializer(target, "")
             } catch (failure: LuaLoadException) {
                 initializationFailure = FailureClassification.PlanningError(
                     failure.message ?: "Target package initialization failed",
@@ -76,18 +60,6 @@ class Editor internal constructor(
 
     /**
      * Reconcile the target field to [text].
-     *
-     * Accepts a complete desired snapshot — the Editor computes the
-     * transition from its assumed current document to [text] via
-     * LCP/LCS diff and the target package's planning function.
-     *
-     * Concurrent calls serialize in arrival order; there is no
-     * coalescing and plan computation never interleaves.
-     *
-     * @param text the complete desired document content. Must be
-     *   printable ASCII (0x20–0x7E) and single-line.
-     * @return [EditorResult.Synced] on success or
-     *   [EditorResult.EditorFailure] on failure.
      */
     fun setText(text: String): EditorResult = commandLane.withLock {
         setTextLocked(text)
@@ -95,210 +67,228 @@ class Editor internal constructor(
 
     private fun setTextLocked(text: String): EditorResult {
         initializationFailure?.let { failure ->
-            return retainFailure(text, failure)
+            return retainFailure(text, failure, null)
         }
 
-        // ── Guard: Unknown is terminal ──
         if (currentState == EditorState.Unknown) {
             return retainFailure(
                 text,
                 FailureClassification.EnvironmentFailure(
                     "Editor is in Unknown state; requires explicit reset()",
                 ),
+                null,
                 resultingState = EditorState.Unknown,
             )
         }
 
         currentState = EditorState.Planning
 
-        // ── Step 1: Validate text constraints ──
         val validationFailure = validateText(text)
         if (validationFailure != null) {
-            return retainFailure(text, validationFailure)
+            return retainFailure(text, validationFailure, null)
         }
 
-        // ── Step 2: Compute LCP/LCS diff ──
-        val diff = computeDiff(assumedDocument, text)
-        // Identical complete snapshots are true no-ops: no Lua invocation,
-        // execution, revision change, or target-state mutation.
-        if (assumedDocument == text) {
-            val retained = RetainedPlan(
+        // Invoke Lua planning
+        val planResult = luaHost.runPlan(
+            target = target,
+            currentText = assumedDocument,
+            desiredText = text,
+            opaqueState = opaqueState,
+            profile = profile
+        )
+
+        if (planResult is LuaInvocationResult.Failure) {
+            return retainFailure(text, planResult.classification, null)
+        }
+
+        val success = planResult as LuaInvocationResult.Success
+        val actions = success.actions
+        val nextState = success.nextState
+        val compileCache = success.compileCache
+
+        // Check no-action rejection
+        if (actions.isEmpty()) {
+            if (text != assumedDocument || nextState != opaqueState) {
+                return retainFailure(
+                    text,
+                    FailureClassification.PlanningError(
+                        "Target produced an empty plan for a mutating transition"
+                    ),
+                    nextState,
+                    actions
+                )
+            }
+
+            // Valid true no-op
+            val ops = emptyList<LowLevelOp>()
+            lastRetainedPlan = RetainedPlan(
                 abiVersion = TargetPackage.HOST_ABI_VERSION,
                 targetId = target.id,
                 targetVersion = target.version,
-                assumedState = programState,
+                targetSourceHash = target.sourceHash,
+                currentText = assumedDocument,
                 desiredText = text,
-                predictedState = programState,
-                predictedPoint = programState.point,
-                ops = emptyList(),
+                opaqueInputState = opaqueState,
+                opaqueOutputState = nextState,
+                symbolicActions = actions,
+                ops = ops,
+                layoutId = profile.key,
+                costMetricId = "op_count:1",
+                policyId = policy.name,
+                outcome = "COMMITTED"
             )
-            lastRetainedPlan = retained
             currentState = EditorState.Synced
+
             EditorTrace.sink.record(
                 VerificationEntry(
                     abiVersion = TargetPackage.HOST_ABI_VERSION,
                     targetId = target.id,
                     targetVersion = target.version,
-                    assumedState = programState,
+                    targetSourceHash = target.sourceHash,
+                    currentText = assumedDocument,
                     desiredText = text,
-                    lcp = diff.lcp,
-                    oldMid = diff.oldMid,
-                    newMid = diff.newMid,
-                    predictedState = programState,
-                    ops = emptyList(),
-                    classification = null,
+                    opaqueInputState = opaqueState,
+                    opaqueOutputState = nextState,
+                    symbolicActions = actions,
+                    ops = ops,
+                    layoutId = profile.key,
+                    costMetricId = "op_count:1",
+                    policyId = policy.name,
+                    outcome = "COMMITTED",
+                    classification = null
                 )
             )
-            return EditorResult.Synced(text, emptyList())
+            return EditorResult.Synced(text, ops)
         }
 
-        // ── Step 3: Validate newMid representability ──
-        if (diff.newMid.isNotEmpty()) {
-            val probe = textPlanner.plan(diff.newMid, HostProfile.LINUX_US)
-            if (!probe.ok) {
-                val glyph = when (val f = probe.failure!!) {
-                    is TextRenderingFailure.UnrepresentableGlyph -> f.ch
-                    is TextRenderingFailure.MissingLayout -> '?'
-                }
-                return retainFailure(
-                    text,
-                    FailureClassification.UnrepresentableContent(glyph),
-                    diff,
-                )
-            }
-        }
-
-        // ── Step 4: Plan transition via Lua target ──
-        val planResult = luaHost.planTransition(
-            current = assumedDocument,
-            desired = text,
-            lcp = diff.lcp,
-            oldMid = diff.oldMid,
-            newMid = diff.newMid,
-            state = programState,
-        )
-        if (!planResult.ok) {
-            return retainFailure(text, planResult.failure!!, diff)
-        }
-
-        // ── Step 5: Validate prediction ──
-        val nextState = planResult.nextState!!
-        if (nextState.buffer != text || nextState.point != diff.lcp + diff.newMid.length) {
-            return retainFailure(
-                text,
-                FailureClassification.InconsistentPrediction(
-                    expected = text,
-                    predicted = nextState.buffer,
-                ),
-                diff,
-                nextState,
-                planResult.ops,
-            )
-        }
-
-        val ops = planResult.ops
-
-        // A non-identical transition cannot be delivered by an empty plan.
-        if (ops.isEmpty()) {
+        // Compile symbolic actions
+        val ops = try {
+            compileActions(actions, hid, profile, policy, compileCache)
+        } catch (e: Exception) {
             return retainFailure(
                 text,
                 FailureClassification.PlanningError(
-                    "Target produced an empty plan for a mutating transition",
+                    e.message ?: "Failed to compile symbolic actions"
                 ),
-                diff,
                 nextState,
+                actions
             )
         }
 
-        // ── Step 7: Execute ──
+        // Execute
         currentState = EditorState.Executing
         val outcome = executor.execute(ops)
 
         return when (outcome) {
             is ExecutionOutcome.Delivered -> {
-                // Capture pre-transition state for retention and trace
-                val priorState = programState
+                val priorDocument = assumedDocument
+                val priorState = opaqueState
 
-                // Commit predicted state
-                programState = nextState
+                // Commit desired text and returned state
+                opaqueState = nextState
                 assumedDocument = text
+
                 lastRetainedPlan = RetainedPlan(
                     abiVersion = TargetPackage.HOST_ABI_VERSION,
                     targetId = target.id,
                     targetVersion = target.version,
-                    assumedState = priorState,
+                    targetSourceHash = target.sourceHash,
+                    currentText = priorDocument,
                     desiredText = text,
-                    predictedState = nextState,
-                    predictedPoint = diff.lcp + diff.newMid.length,
+                    opaqueInputState = priorState,
+                    opaqueOutputState = nextState,
+                    symbolicActions = actions,
                     ops = ops,
+                    layoutId = profile.key,
+                    costMetricId = "op_count:1",
+                    policyId = policy.name,
+                    outcome = "COMMITTED"
                 )
                 currentState = EditorState.Synced
 
-                // Verification trace (package-level sink, no public exposure)
                 EditorTrace.sink.record(
                     VerificationEntry(
                         abiVersion = TargetPackage.HOST_ABI_VERSION,
                         targetId = target.id,
                         targetVersion = target.version,
-                        assumedState = priorState,
+                        targetSourceHash = target.sourceHash,
+                        currentText = priorDocument,
                         desiredText = text,
-                        lcp = diff.lcp,
-                        oldMid = diff.oldMid,
-                        newMid = diff.newMid,
-                        predictedState = nextState,
+                        opaqueInputState = priorState,
+                        opaqueOutputState = nextState,
+                        symbolicActions = actions,
                         ops = ops,
-                        classification = null,
+                        layoutId = profile.key,
+                        costMetricId = "op_count:1",
+                        policyId = policy.name,
+                        outcome = "COMMITTED",
+                        classification = null
                     )
                 )
 
                 EditorResult.Synced(text, ops)
             }
 
-            is ExecutionOutcome.Partial -> retainFailure(
-                text = text,
-                classification = outcome.reason,
-                diff = diff,
-                predictedState = nextState,
-                ops = ops,
-                resultingState = EditorState.Unknown,
-            )
+            is ExecutionOutcome.Partial -> {
+                retainFailure(
+                    text = text,
+                    classification = outcome.reason,
+                    predictedState = nextState,
+                    symbolicActions = actions,
+                    ops = ops,
+                    resultingState = EditorState.Unknown
+                )
+            }
         }
     }
 
     private fun retainFailure(
         text: String,
         classification: FailureClassification,
-        diff: DiffResult = computeDiff(assumedDocument, text),
-        predictedState: ReadlineProgramState = programState,
+        predictedState: AbiValue?,
+        symbolicActions: List<SymbolicAction>? = null,
         ops: List<LowLevelOp> = emptyList(),
         resultingState: EditorState = EditorState.Failed,
     ): EditorResult.EditorFailure {
+        val outcome = if (resultingState == EditorState.Unknown) "UNKNOWN" else "FAILED"
         lastRetainedPlan = RetainedPlan(
             abiVersion = TargetPackage.HOST_ABI_VERSION,
             targetId = target.id,
             targetVersion = target.version,
-            assumedState = programState,
+            targetSourceHash = target.sourceHash,
+            currentText = assumedDocument,
             desiredText = text,
-            predictedState = predictedState,
-            predictedPoint = predictedState.point,
+            opaqueInputState = opaqueState,
+            opaqueOutputState = predictedState,
+            symbolicActions = symbolicActions,
             ops = ops,
+            layoutId = profile.key,
+            costMetricId = "op_count:1",
+            policyId = policy.name,
+            outcome = outcome
         )
         currentState = resultingState
+
         EditorTrace.sink.record(
             VerificationEntry(
                 abiVersion = TargetPackage.HOST_ABI_VERSION,
                 targetId = target.id,
                 targetVersion = target.version,
-                assumedState = programState,
+                targetSourceHash = target.sourceHash,
+                currentText = assumedDocument,
                 desiredText = text,
-                lcp = diff.lcp,
-                oldMid = diff.oldMid,
-                newMid = diff.newMid,
-                predictedState = predictedState,
+                opaqueInputState = opaqueState,
+                opaqueOutputState = predictedState,
+                symbolicActions = symbolicActions,
                 ops = ops,
-                classification = classification,
+                layoutId = profile.key,
+                costMetricId = "op_count:1",
+                policyId = policy.name,
+                outcome = outcome,
+                classification = classification
             )
         )
+
         return EditorResult.EditorFailure(
             requestedDocument = text,
             classification = classification,
@@ -308,75 +298,56 @@ class Editor internal constructor(
 
     /**
      * Read-only public state name.
-     *
-     * Returns one of [EditorState.Uninitialized], [EditorState.Synced],
-     * [EditorState.Failed], or [EditorState.Unknown]. The transient
-     * states [EditorState.Planning] and [EditorState.Executing] are
-     * never returned because [setText] is synchronous.
      */
     fun state(): EditorState = commandLane.withLock { currentState }
 
     /**
      * Explicit reset to empty known state.
-     *
-     * Resets the assumed document, program state, and revision to
-     * empty/zero, and transitions to [EditorState.Uninitialized].
-     *
-     * This is the only recovery path from [EditorState.Unknown].
-     * The Lua host adapter is NOT re-initialised; the target package
-     * remains loaded.
      */
     fun reset() = commandLane.withLock {
         currentState = EditorState.Uninitialized
         assumedDocument = ""
-        programState = ReadlineProgramState()
+        lastRetainedPlan = null
+        try {
+            opaqueState = luaHost.runInitializer(target, "")
+            initializationFailure = null
+        } catch (failure: LuaLoadException) {
+            initializationFailure = FailureClassification.PlanningError(
+                failure.message ?: "Target package initialization failed on reset",
+            )
+            opaqueState = AbiValue.Null
+        }
+    }
+
+    /**
+     * Restore current assumed document and opaque state for replay.
+     */
+    fun restore(document: String, state: AbiValue) = commandLane.withLock {
+        assumedDocument = document
+        opaqueState = state
+        currentState = EditorState.Synced
         lastRetainedPlan = null
     }
 
     // ── Internal / verification access ──
 
-    /**
-     * Internal verification state snapshot.
-     *
-     * Package-level visibility for HIL and diagnostics. Exposes the
-     * assumed document, program state, and retained plan that are
-     * deliberately absent from the public [EditorResult] type.
-     */
     internal val verificationState: VerificationState
         get() = VerificationState(
             state = currentState,
             assumedDocument = assumedDocument,
-            programState = programState,
+            opaqueState = opaqueState,
             lastPlan = lastRetainedPlan,
             luaPlanCount = lastRetainedPlan?.ops?.size ?: 0,
         )
 
-    /**
-     * Snapshot of the Editor's internal state for verification purposes.
-     *
-     * @property state           current Editor state.
-     * @property assumedDocument the Editor's assumed target document text.
-     * @property programState    the committed target program state.
-     * @property lastPlan        the last retained plan, or null.
-     * @property luaPlanCount    number of ops in the last Lua-produced plan.
-     */
     data class VerificationState(
         val state: EditorState,
         val assumedDocument: String,
-        val programState: ReadlineProgramState,
+        val opaqueState: AbiValue,
         val lastPlan: RetainedPlan?,
         val luaPlanCount: Int,
     )
 
-    // ── Text validation ──
-
-    /**
-     * Validate [text] against the target package's declared constraints.
-     *
-     * Checks:
-     * - Single-line (no CR, LF)
-     * - ASCII printable (0x20–0x7E)
-     */
     private fun validateText(text: String): FailureClassification? {
         if (text.contains('\n') || text.contains('\r')) {
             return FailureClassification.UnsupportedBehavior(
@@ -391,29 +362,103 @@ class Editor internal constructor(
         }
         return null
     }
-}
 
-/**
- * Retained plan record for verification and diagnostics.
- *
- * @property abiVersion       host ABI version used to generate the plan.
- * @property targetId         target package identity.
- * @property assumedState     the Editor's committed program state before
- *                            the transition.
- * @property desiredText      the complete snapshot the caller requested.
- * @property predictedState   the target package's predicted next program
- *                            state.
- * @property predictedPoint   predicted caret position after execution
- *                            (lcp + newMid.length).
- * @property ops              the ordered low-level keyboard operations.
- */
-data class RetainedPlan(
-    val abiVersion: Int,
-    val targetId: String,
-    val targetVersion: String,
-    val assumedState: ReadlineProgramState,
-    val desiredText: String,
-    val predictedState: ReadlineProgramState,
-    val predictedPoint: Int,
-    val ops: List<LowLevelOp>,
-)
+    private fun compileActions(
+        actions: List<SymbolicAction>,
+        hid: LowLevelHid,
+        profile: HostProfile,
+        policy: ExecutionPolicy,
+        compileCache: Map<String, List<LowLevelOp>>
+    ): List<LowLevelOp> {
+        val dummyOps = mutableListOf<LowLevelOp>()
+        val dummyTextPlanner = TextPlanner(hid = NonAllocatingHid)
+
+        for (action in actions) {
+            when (action) {
+                is SymbolicAction.Tap -> {
+                    rejectF24IfReserved(action.usage, policy)
+                    val usage = try {
+                        Usages.byName(action.usage)
+                    } catch (e: Exception) {
+                        throw IllegalArgumentException("Unknown HID usage: ${action.usage}")
+                    }
+                    dummyOps.add(NonAllocatingHid.keyTap(usage))
+                }
+                is SymbolicAction.Down -> {
+                    rejectF24IfReserved(action.usage, policy)
+                    val usage = try {
+                        Usages.byName(action.usage)
+                    } catch (e: Exception) {
+                        throw IllegalArgumentException("Unknown HID usage: ${action.usage}")
+                    }
+                    dummyOps.add(NonAllocatingHid.keyDown(usage))
+                }
+                is SymbolicAction.Up -> {
+                    rejectF24IfReserved(action.usage, policy)
+                    val usage = try {
+                        Usages.byName(action.usage)
+                    } catch (e: Exception) {
+                        throw IllegalArgumentException("Unknown HID usage: ${action.usage}")
+                    }
+                    dummyOps.add(NonAllocatingHid.keyUp(usage))
+                }
+                is SymbolicAction.Text -> {
+                    val ops = compileCache[action.text] ?: run {
+                        val plan = dummyTextPlanner.plan(action.text, profile)
+                        if (!plan.ok) {
+                            val failure = plan.failure!!
+                            val msg = when (failure) {
+                                is TextRenderingFailure.MissingLayout -> "missing layout: ${failure.profile}"
+                                is TextRenderingFailure.UnrepresentableGlyph -> "unrepresentable glyph: '${failure.ch}'"
+                            }
+                            throw IllegalArgumentException("Text rendering failed: $msg")
+                        }
+                        plan.plan!!
+                    }
+                    rejectF24InOpsIfReserved(ops, policy)
+                    dummyOps.addAll(ops)
+                }
+            }
+        }
+
+        if (dummyOps.size > 1000) {
+            throw IllegalArgumentException("Plan size limit exceeded (${dummyOps.size} > 1000)")
+        }
+
+        return dummyOps.map { it.copy(seqId = hid.nextSeqId()) }
+    }
+
+    private fun rejectF24IfReserved(usage: String, policy: ExecutionPolicy) {
+        if (policy == ExecutionPolicy.CONFORMANCE) {
+            if (usage == "USB_KEY_F24" || usage == "F24") {
+                throw IllegalArgumentException("F24 is reserved for synchronization and unavailable under the active policy")
+            }
+        }
+    }
+
+    private fun rejectF24InOpsIfReserved(ops: List<LowLevelOp>, policy: ExecutionPolicy) {
+        if (policy == ExecutionPolicy.CONFORMANCE) {
+            val f24Usage = Usages.USB_KEY_F24.usbUsage.toByte()
+            for (op in ops) {
+                if ((op.opcode == Opcodes.KEY_TAP || op.opcode == Opcodes.KEY_DOWN || op.opcode == Opcodes.KEY_UP) &&
+                    op.payload.isNotEmpty() && op.payload[0] == f24Usage
+                ) {
+                    throw IllegalArgumentException("F24 is reserved for synchronization and unavailable under the active policy")
+                }
+            }
+        }
+    }
+
+    private object NonAllocatingHid : LowLevelHid {
+        override fun nextSeqId(): Int = 0
+        override fun arm(seqId: Int): LowLevelOp = LowLevelOp(Opcodes.ARM, byteArrayOf(), seqId)
+        override fun disarm(seqId: Int): LowLevelOp = LowLevelOp(Opcodes.DISARM, byteArrayOf(), seqId)
+        override fun kill(seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KILL, byteArrayOf(), seqId)
+        override fun releaseAll(seqId: Int): LowLevelOp = LowLevelOp(Opcodes.RELEASE_ALL, byteArrayOf(), seqId)
+        override fun keyTap(usage: HidUsage, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KEY_TAP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+        override fun keyDown(usage: HidUsage, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KEY_DOWN, byteArrayOf(usage.usbUsage.toByte()), seqId)
+        override fun keyUp(usage: HidUsage, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KEY_UP, byteArrayOf(usage.usbUsage.toByte()), seqId)
+        override fun keyboardTapScript(taps: List<Pair<Byte, Byte>>, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.KEYBOARD_TAP_SCRIPT, byteArrayOf(), seqId)
+        override fun mouseRelReport(buttons: Int, dx: Int, dy: Int, wheel: Int, pan: Int, seqId: Int): LowLevelOp = LowLevelOp(Opcodes.MOUSE_REL_REPORT, byteArrayOf(), seqId)
+    }
+}

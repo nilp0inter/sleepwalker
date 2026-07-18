@@ -2,6 +2,8 @@ package io.sleepwalker.app.adb
 
 import android.util.Base64
 import io.sleepwalker.core.editor.EditorResult
+import io.sleepwalker.core.editor.AbiValue
+import io.sleepwalker.core.editor.SymbolicAction
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import org.junit.Assert.assertEquals
@@ -62,12 +64,11 @@ class AdbCommandReceiverTest {
     }
 
     @Test
-    fun invalid_set_text_payloads_return_structured_failure_without_hid_execution_while_legacy_decoder_remains_available() {
+    fun invalid_set_text_payloads_return_structured_failure_without_hid_execution() {
         val malformedUtf8 = Base64.encodeToString(
             byteArrayOf(0xC3.toByte(), 0x28),
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
         )
-        val legacyText = "legacy append \\ path"
         val invokedWith = mutableListOf<String>()
         val receiver = AdbCommandReceiver()
 
@@ -109,12 +110,18 @@ class AdbCommandReceiverTest {
         assertEquals("invalid_base64url_or_utf8", invalidJson.getString("failure"))
         assertEquals("not_sent", invalidJson.getString("transport_status"))
         assertEquals(0, invalidJson.getJSONArray("operation_seqs").length())
-        assertEquals(legacyText, AdbCommandReceiver.decodeBase64Url(encodeBase64Url(legacyText)))
-        assertEquals("\uFFFD(", AdbCommandReceiver.decodeBase64Url(malformedUtf8))
     }
 
     @Test
-    fun set_text_diagnostic_fields_carry_correlated_snapshot_plan_and_prediction_evidence() {
+    fun set_text_diagnostics_serialize_complete_pure_abi_evidence() {
+        val opaqueInput = AbiValue.Obj(mapOf(
+            "mode" to AbiValue.Str("insert"),
+            "position" to AbiValue.Int64(4),
+        ))
+        val opaqueOutput = AbiValue.Obj(mapOf(
+            "mode" to AbiValue.Str("command"),
+            "position" to AbiValue.Int64(9),
+        ))
         val result = SetTextResult(
             seq = 902,
             textLength = 13,
@@ -125,54 +132,46 @@ class AdbCommandReceiverTest {
             transportStatus = "ok",
             abiVersion = 1,
             targetId = "readline-emacs-ascii",
-            lcp = 4,
-            oldMid = "old",
-            newMid = "new",
-            predictedBuffer = "done snapshot",
-            predictedPoint = 13,
-            predictedRevision = 7,
-            assumedBuffer = "old snapshot",
-            planOpNames = listOf("key_down", "key_up", "key_tap"),
-            operationStatuses = listOf("40:sent_to_usb", "41:sent_to_usb", "42:sent_to_usb"),
+            targetVersion = "2.0.0",
+            targetSourceHash = "sha256:readline",
+            currentText = "old snapshot",
+            desiredText = "done snapshot",
+            opaqueInputState = opaqueInput,
+            opaqueOutputState = opaqueOutput,
+            symbolicActions = listOf(
+                SymbolicAction.Tap("USB_KEY_A"),
+                SymbolicAction.Text("done snapshot"),
+            ),
+            compiledOperations = listOf("tap USB_KEY_A", "text done snapshot"),
+            layoutId = "us-qwerty:2026-07",
+            costMetricId = "low-level-ops:v1",
+            policyId = "CONFORMANCE",
+            transactionOutcome = "COMMITTED",
+            classification = null,
+            planOpNames = listOf("key_tap", "text"),
+            operationStatuses = listOf("40:sent_to_usb", "41:sent_to_usb"),
             failure = null,
-            targetVersion = "1.2.3",
         )
 
         val fields = AdbCommandReceiver().setTextDiagnosticFields(result)
-
-        assertEquals(902, fields["seq"])
-        assertEquals(13, fields["text_length"])
-        assertEquals("Synced", fields["result"])
-        assertEquals(3, fields["plan_ops"])
-        assertEquals("40,41,42", fields["operation_seqs"])
-        assertEquals(1, fields["abi_version"])
-        assertEquals("readline-emacs-ascii", fields["target_id"])
-        assertEquals(4, fields["lcp"])
-        assertEquals("old", fields["old_mid"])
-        assertEquals("new", fields["new_mid"])
-        assertEquals("done snapshot", fields["predicted_buffer"])
-        assertEquals(13, fields["predicted_point"])
-        assertEquals(7L, fields["predicted_revision"])
-        assertEquals("old snapshot", fields["assumed_buffer"])
-        assertFalse(fields.containsKey("failure_class"))
-
         val json = org.json.JSONObject(AdbCommandReceiver().setTextDiagnosticJson(result))
-        assertEquals(902, json.getInt("seq"))
-        assertEquals("set-text", json.getString("cmd"))
-        assertTrue(json.getBoolean("ok"))
-        assertEquals(13, json.getInt("decoded_len"))
-        assertEquals("readline-emacs-ascii", json.getJSONObject("package").getString("id"))
-        assertEquals("1.2.3", json.getJSONObject("package").getString("version"))
-        assertEquals(1, json.getJSONObject("package").getInt("host_abi"))
-        assertEquals("new", json.getString("new_mid"))
-        assertEquals("done snapshot", json.getJSONObject("predicted").getString("buffer"))
-        assertEquals("key_up", json.getJSONArray("plan_ops").getString(1))
-        assertEquals(41, json.getJSONArray("operation_seqs").getInt(1))
-        assertEquals("41:sent_to_usb", json.getJSONArray("operation_statuses").getString(1))
+
+        assertEquals("old snapshot", fields["current_text"])
+        assertEquals("done snapshot", fields["desired_text"])
+        assertEquals("readline-emacs-ascii", fields["package_id"])
+        assertEquals("sha256:readline", fields["package_source_hash"])
+        assertEquals("CONFORMANCE", fields["policy_id"])
+        assertEquals("COMMITTED", fields["transaction_outcome"])
+        assertTrue(json.getJSONObject("opaque_input_state").has("position"))
+        assertEquals("command", json.getJSONObject("opaque_output_state").getString("mode"))
+        assertEquals("tap", json.getJSONArray("symbolic_actions").getJSONObject(0).getString("kind"))
+        assertEquals("text done snapshot", json.getJSONArray("compiled_operations").getString(1))
+        assertEquals("us-qwerty:2026-07", json.getString("layout_id"))
+        assertEquals("low-level-ops:v1", json.getString("cost_metric_id"))
     }
 
     @Test
-    fun set_text_diagnostic_fields_preserve_transport_failure_class_and_partial_plan_evidence() {
+    fun failed_delivery_retains_unknown_transaction_outcome_and_abi_evidence() {
         val result = SetTextResult(
             seq = 903,
             textLength = 5,
@@ -183,27 +182,34 @@ class AdbCommandReceiverTest {
             transportStatus = "transport: Timeout waiting for ack (seq 71)",
             abiVersion = 1,
             targetId = "readline-emacs-ascii",
-            lcp = 2,
-            oldMid = "ld",
-            newMid = "new",
-            predictedBuffer = "new",
-            predictedPoint = 3,
-            predictedRevision = 8,
-            assumedBuffer = "old",
-            planOpNames = listOf("key_down", "key_up"),
+            targetVersion = "2.0.0",
+            targetSourceHash = "sha256:readline",
+            currentText = "old",
+            desiredText = "new",
+            opaqueInputState = AbiValue.Obj(mapOf("epoch" to AbiValue.Int64(7))),
+            opaqueOutputState = null,
+            symbolicActions = listOf(SymbolicAction.Text("new")),
+            compiledOperations = listOf("text new"),
+            layoutId = "us-qwerty:2026-07",
+            costMetricId = "low-level-ops:v1",
+            policyId = "CONFORMANCE",
+            transactionOutcome = "UNKNOWN",
+            classification = "TransportFailure",
+            planOpNames = listOf("text"),
             operationStatuses = listOf("70:sent_to_usb", "71:timeout"),
             failure = "TransportFailure(reason=Timeout waiting for ack (seq 71))",
-            targetVersion = "1.2.3",
         )
 
-        val fields = AdbCommandReceiver().setTextDiagnosticFields(result)
+        val json = org.json.JSONObject(AdbCommandReceiver().setTextDiagnosticJson(result))
 
-        assertEquals("EditorFailure", fields["result"])
-        assertEquals("transport", fields["failure_class"])
-        assertEquals("transport: Timeout waiting for ack (seq 71)", fields["transport_status"])
-        assertEquals(2, fields["plan_ops"])
-        assertEquals("70,71", fields["operation_seqs"])
-        assertEquals("readline-emacs-ascii", fields["target_id"])
+        assertFalse(json.getBoolean("ok"))
+        assertEquals("transport", json.getString("failure_class"))
+        assertEquals("UNKNOWN", json.getString("transaction_outcome"))
+        assertEquals("TransportFailure", json.getString("classification"))
+        assertEquals("old", json.getString("current_text"))
+        assertEquals("new", json.getString("desired_text"))
+        assertEquals("text", json.getJSONArray("symbolic_actions").getJSONObject(0).getString("kind"))
+        assertEquals("text new", json.getJSONArray("compiled_operations").getString(0))
     }
 
     @Test

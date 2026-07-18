@@ -1,5 +1,7 @@
 package io.sleepwalker.core.editor
 
+import io.sleepwalker.core.protocol.Opcodes
+import java.util.concurrent.CountDownLatch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -7,377 +9,317 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EditorTest {
-    @Test fun delivered_failure_partial_unknown_and_reset_follow_the_state_contract() {
-        val hid = RecordingHid()
-        val executor = RecordingEditorExecutor(
-            ArrayDeque(
-                listOf(
-                    ExecutionOutcome.Delivered(emptyList()),
-                    ExecutionOutcome.Partial(
-                        delivered = emptyList(),
-                        reason = FailureClassification.TransportFailure("link lost"),
-                    ),
-                    ExecutionOutcome.Delivered(emptyList()),
-                ),
+    @Test fun initializes_package_state_and_commits_text_and_opaque_state_only_after_delivery() {
+        val executor = RecordingEditorExecutor(ArrayDeque(listOf(ExecutionOutcome.Delivered(emptyList()))))
+        val editor = editor(
+            executor = executor,
+            mainLua = EditorTestFixtures.packageProgram(
+                initializer = "{ revision = 10, package_owned = 'opaque' }",
+                planner = """
+                    return {
+                        actions = { { kind = "tap", usage = "USB_KEY_A" } },
+                        next_state = { revision = state.revision + 1, package_owned = state.package_owned },
+                    }
+                """.trimIndent(),
             ),
         )
-        val editor = Editor(EditorTestFixtures.target(), executor, hid)
-        val statesObservedAtExecution = mutableListOf<EditorState>()
-        executor.onExecute = { statesObservedAtExecution += editor.state() }
 
-        assertEquals(EditorState.Uninitialized, editor.state())
-
-        val initial = editor.setText("alpha")
-        assertTrue(initial is EditorResult.Synced)
-        assertEquals(EditorState.Synced, editor.state())
-        assertEquals(listOf(EditorState.Executing), statesObservedAtExecution)
-
-        val rejected = editor.setText("two\nlines")
-        assertTrue(rejected is EditorResult.EditorFailure)
-        assertTrue((rejected as EditorResult.EditorFailure).classification is FailureClassification.UnsupportedBehavior)
-        assertEquals(EditorState.Failed, editor.state())
-        assertEquals(1, executor.submittedPlans.size)
-
-        val partial = editor.setText("beta")
-        assertTrue(partial is EditorResult.EditorFailure)
-        assertTrue((partial as EditorResult.EditorFailure).classification is FailureClassification.TransportFailure)
-        assertEquals(EditorState.Unknown, editor.state())
-
-        val rejectedWhileUnknown = editor.setText("must not execute") as EditorResult.EditorFailure
-        assertTrue(rejectedWhileUnknown.classification is FailureClassification.EnvironmentFailure)
-        assertNull(rejectedWhileUnknown.plan)
-        assertEquals(2, executor.submittedPlans.size)
-
-        editor.reset()
-        assertEquals(EditorState.Uninitialized, editor.state())
-
-        val recovered = editor.setText("fresh")
-        assertTrue(recovered is EditorResult.Synced)
-        assertEquals(EditorState.Synced, editor.state())
         assertEquals(
-            listOf(EditorState.Executing, EditorState.Executing, EditorState.Executing),
-            statesObservedAtExecution,
+            AbiValue.Obj(mapOf("revision" to AbiValue.Int64(10), "package_owned" to AbiValue.Str("opaque"))),
+            editor.verificationState.opaqueState,
         )
-    }
 
-    @Test fun planning_and_executing_are_entered_at_their_respective_boundaries() {
-        val planningProgram = """
-            function plan(current, desired, lcp, oldMid, newMid, state)
-                host.ctrl("A")
-                host.text_plan(newMid)
-                return { buffer = desired, point = #desired, revision = state.revision + 1 }
-            end
-        """.trimIndent()
-        val hid = RecordingHid()
-        val executor = RecordingEditorExecutor(
-            ArrayDeque(listOf(ExecutionOutcome.Delivered(emptyList()))),
-        )
-        lateinit var editor: Editor
-        var stateWhenLuaStartedPlanning: EditorState? = null
-        var stateWhenExecutionStarted: EditorState? = null
-        hid.onOperation = { op ->
-            if (op.payload.singleOrNull()?.toInt()?.and(0xFF) ==
-                io.sleepwalker.core.protocol.Usages.USB_KEY_LEFTCTRL.usbUsage
-            ) {
-                stateWhenLuaStartedPlanning = editor.state()
-            }
-        }
-        executor.onExecute = { stateWhenExecutionStarted = editor.state() }
-        editor = Editor(EditorTestFixtures.target(mainLua = planningProgram), executor, hid)
+        val result = editor.setText("first")
 
-        assertTrue(editor.setText("value") is EditorResult.Synced)
-
-        assertEquals(EditorState.Planning, stateWhenLuaStartedPlanning)
-        assertEquals(EditorState.Executing, stateWhenExecutionStarted)
+        assertTrue(result is EditorResult.Synced)
         assertEquals(EditorState.Synced, editor.state())
-    }
-
-    @Test fun non_ascii_and_non_single_line_snapshots_are_rejected_before_execution() {
-        data class Case(val requested: String, val expected: Class<out FailureClassification>)
-
-        val cases = listOf(
-            Case("café", FailureClassification.UnrepresentableContent::class.java),
-            Case("first\nsecond", FailureClassification.UnsupportedBehavior::class.java),
-            Case("first\rsecond", FailureClassification.UnsupportedBehavior::class.java),
+        assertEquals("first", editor.verificationState.assumedDocument)
+        assertEquals(
+            AbiValue.Obj(mapOf("revision" to AbiValue.Int64(11), "package_owned" to AbiValue.Str("opaque"))),
+            editor.verificationState.opaqueState,
         )
-        for (case in cases) {
-            val executor = RecordingEditorExecutor(ArrayDeque())
-            val editor = Editor(EditorTestFixtures.target(), executor, RecordingHid())
-
-            val failure = editor.setText(case.requested) as EditorResult.EditorFailure
-
-            assertTrue(case.requested, case.expected.isInstance(failure.classification))
-            assertNull(case.requested, failure.plan)
-            assertTrue(case.requested, executor.submittedPlans.isEmpty())
-            assertEquals(case.requested, EditorState.Failed, editor.state())
-        }
-    }
-
-    @Test fun no_op_returns_an_empty_plan_without_transport_execution() {
-        val executor = RecordingEditorExecutor(
-            ArrayDeque(listOf(ExecutionOutcome.Delivered(emptyList()))),
-        )
-        val editor = Editor(EditorTestFixtures.target(), executor, RecordingHid())
-
-        assertTrue(editor.setText("stable") is EditorResult.Synced)
-        val noOp = editor.setText("stable") as EditorResult.Synced
-
-        assertTrue(noOp.plan.isEmpty())
+        assertEquals("", editor.verificationState.lastPlan!!.currentText)
+        assertEquals("first", editor.verificationState.lastPlan!!.desiredText)
         assertEquals(1, executor.submittedPlans.size)
-        assertEquals(EditorState.Synced, editor.state())
     }
 
-    @Test fun only_delivered_execution_commits_predicted_program_state() {
+    @Test fun pre_execution_failure_retains_the_last_committed_text_and_opaque_state() {
         val executor = RecordingEditorExecutor(
-            ArrayDeque(
-                listOf(
-                    ExecutionOutcome.Delivered(emptyList()),
-                    ExecutionOutcome.Partial(
-                        delivered = emptyList(),
-                        reason = FailureClassification.TransportFailure("disarmed"),
-                    ),
-                ),
+            ArrayDeque(listOf(ExecutionOutcome.Delivered(emptyList()), ExecutionOutcome.Delivered(emptyList()))),
+        )
+        val editor = editor(
+            executor = executor,
+            mainLua = EditorTestFixtures.packageProgram(
+                initializer = "{ revision = 0 }",
+                planner = """
+                    if desired == "reject" then
+                        return {
+                            actions = { { kind = "unknown", usage = "USB_KEY_A" } },
+                            next_state = { revision = 999 },
+                        }
+                    end
+                    return {
+                        actions = { { kind = "tap", usage = "USB_KEY_A" } },
+                        next_state = { revision = state.revision + 1 },
+                    }
+                """.trimIndent(),
             ),
         )
-        val editor = Editor(EditorTestFixtures.target(), executor, RecordingHid())
 
         assertTrue(editor.setText("committed") is EditorResult.Synced)
-        val committed = editor.verificationState
-        assertEquals("committed", committed.assumedDocument)
-        assertEquals("committed", committed.programState.buffer)
-        assertEquals("committed", committed.lastPlan!!.desiredText)
+        val failed = editor.setText("reject") as EditorResult.EditorFailure
+        assertTrue(failed.classification is FailureClassification.PlanningError)
+        assertEquals(EditorState.Failed, editor.state())
+        assertEquals("committed", editor.verificationState.assumedDocument)
+        assertEquals(AbiValue.Obj(mapOf("revision" to AbiValue.Int64(1))), editor.verificationState.opaqueState)
+        assertEquals(1, executor.submittedPlans.size)
 
-        val invalid = editor.setText("invalid\ncontent") as EditorResult.EditorFailure
-        assertNull(invalid.plan)
-        val afterPlanningFailure = editor.verificationState
-        assertEquals(committed.assumedDocument, afterPlanningFailure.assumedDocument)
-        assertEquals(committed.programState, afterPlanningFailure.programState)
-        assertEquals("invalid\ncontent", afterPlanningFailure.lastPlan!!.desiredText)
-        assertTrue(afterPlanningFailure.lastPlan!!.ops.isEmpty())
-
-        val partial = editor.setText("not-committed") as EditorResult.EditorFailure
-        assertTrue(partial.plan!!.isNotEmpty())
-        val afterPartialExecution = editor.verificationState
-        assertEquals(EditorState.Unknown, afterPartialExecution.state)
-        assertEquals(committed.assumedDocument, afterPartialExecution.assumedDocument)
-        assertEquals(committed.programState, afterPartialExecution.programState)
-        assertEquals("not-committed", afterPartialExecution.lastPlan!!.desiredText)
-        assertEquals(partial.plan, afterPartialExecution.lastPlan!!.ops)
-    }
-    @Test fun multiline_rejection_traces_and_replaces_retained_plan_evidence() {
-        val target = EditorTestFixtures.target()
-        val executor = RecordingEditorExecutor(ArrayDeque())
-        val editor = Editor(target, executor, RecordingHid())
-        val entries = mutableListOf<VerificationEntry>()
-        val originalSink = EditorTrace.sink
-        EditorTrace.sink = object : VerificationSink {
-            override fun record(entry: VerificationEntry) { entries += entry }
-        }
-
-        try {
-            val failure = editor.setText("first\nsecond") as EditorResult.EditorFailure
-            val entry = entries.single()
-            val retained = editor.verificationState.lastPlan!!
-
-            assertTrue(failure.classification is FailureClassification.UnsupportedBehavior)
-            assertNull(failure.plan)
-            assertEquals(failure.classification, entry.classification)
-            assertEquals(target.version, entry.targetVersion)
-            assertEquals(entry.targetVersion, retained.targetVersion)
-            assertEquals("first\nsecond", entry.desiredText)
-            assertTrue(entry.ops.isEmpty())
-            assertEquals(entry.desiredText, retained.desiredText)
-            assertEquals(entry.assumedState, retained.assumedState)
-            assertEquals(entry.predictedState, retained.predictedState)
-            assertEquals(entry.ops, retained.ops)
-            assertTrue(executor.submittedPlans.isEmpty())
-        } finally {
-            EditorTrace.sink = originalSink
-        }
+        assertTrue(editor.setText("next") is EditorResult.Synced)
+        assertEquals("committed", editor.verificationState.lastPlan!!.currentText)
+        assertEquals(AbiValue.Obj(mapOf("revision" to AbiValue.Int64(1))), editor.verificationState.lastPlan!!.opaqueInputState)
     }
 
-    @Test fun partial_execution_traces_and_retains_the_uncompleted_plan() {
-        val target = EditorTestFixtures.target()
-        val executor = RecordingEditorExecutor(
-            ArrayDeque(
-                listOf(
-                    ExecutionOutcome.Partial(
-                        delivered = emptyList(),
-                        reason = FailureClassification.TransportFailure("queue full"),
-                    ),
-                ),
+    @Test fun no_action_plan_cannot_claim_text_or_opaque_state_transition() {
+        data class Case(val name: String, val current: String, val planner: String)
+
+        val cases = listOf(
+            Case(
+                "rendered text transition",
+                "before",
+                "return { actions = {}, next_state = state }",
+            ),
+            Case(
+                "opaque state transition",
+                "same",
+                "return { actions = {}, next_state = { revision = state.revision + 1 } }",
             ),
         )
-        val editor = Editor(target, executor, RecordingHid())
-        val entries = mutableListOf<VerificationEntry>()
-        val originalSink = EditorTrace.sink
-        EditorTrace.sink = object : VerificationSink {
-            override fun record(entry: VerificationEntry) { entries += entry }
-        }
 
-        try {
-            val failure = editor.setText("partial") as EditorResult.EditorFailure
-            val entry = entries.single()
-            val retained = editor.verificationState.lastPlan!!
+        cases.forEach { case ->
+            val executor = RecordingEditorExecutor(ArrayDeque())
+            val editor = editor(
+                executor = executor,
+                mainLua = EditorTestFixtures.packageProgram("{ revision = 4 }", case.planner),
+            )
+            editor.restore("same", AbiValue.Obj(mapOf("revision" to AbiValue.Int64(4))))
 
-            assertEquals(EditorState.Unknown, editor.state())
-            assertTrue(failure.classification is FailureClassification.TransportFailure)
-            assertEquals(failure.classification, entry.classification)
-            assertEquals(failure.plan, entry.ops)
-            assertEquals(target.version, entry.targetVersion)
-            assertEquals(entry.targetVersion, retained.targetVersion)
-            assertEquals("partial", retained.desiredText)
-            assertEquals(entry.assumedState, retained.assumedState)
-            assertEquals(entry.predictedState, retained.predictedState)
-            assertEquals(entry.ops, retained.ops)
-        } finally {
-            EditorTrace.sink = originalSink
+            val result = editor.setText(case.current) as EditorResult.EditorFailure
+
+            assertTrue(case.name, result.classification is FailureClassification.PlanningError)
+            assertEquals(case.name, "same", editor.verificationState.assumedDocument)
+            assertEquals(case.name, AbiValue.Obj(mapOf("revision" to AbiValue.Int64(4))), editor.verificationState.opaqueState)
+            assertTrue(case.name, executor.submittedPlans.isEmpty())
         }
     }
 
-    @Test fun unknown_guard_traces_the_rejected_request_and_replaces_partial_evidence() {
-        val executor = RecordingEditorExecutor(
-            ArrayDeque(
-                listOf(
-                    ExecutionOutcome.Partial(
-                        delivered = emptyList(),
-                        reason = FailureClassification.TransportFailure("link lost"),
-                    ),
-                ),
+    @Test fun reset_reinitializes_opaque_state_from_the_empty_known_document() {
+        val executor = RecordingEditorExecutor(ArrayDeque(listOf(ExecutionOutcome.Delivered(emptyList()))))
+        val editor = editor(
+            executor = executor,
+            mainLua = EditorTestFixtures.packageProgram(
+                initializer = "{ initialized_from = current }",
+                planner = """
+                    return {
+                        actions = { { kind = "tap", usage = "USB_KEY_A" } },
+                        next_state = { initialized_from = state.initialized_from, last = desired },
+                    }
+                """.trimIndent(),
             ),
         )
-        val target = EditorTestFixtures.target()
-        val editor = Editor(target, executor, RecordingHid())
-        val entries = mutableListOf<VerificationEntry>()
-        val originalSink = EditorTrace.sink
-        EditorTrace.sink = object : VerificationSink {
-            override fun record(entry: VerificationEntry) { entries += entry }
-        }
 
-        try {
-            val partial = editor.setText("partially-delivered") as EditorResult.EditorFailure
-            val rejected = editor.setText("blocked-after-unknown") as EditorResult.EditorFailure
-            val retained = editor.verificationState.lastPlan!!
+        editor.restore("stale", AbiValue.Obj(mapOf("initialized_from" to AbiValue.Str("stale"))))
+        editor.reset()
 
-            assertEquals(EditorState.Unknown, editor.state())
-            assertTrue(partial.plan!!.isNotEmpty())
-            assertTrue(rejected.classification is FailureClassification.EnvironmentFailure)
-            assertNull(rejected.plan)
-            assertEquals(2, entries.size)
-            assertEquals(rejected.classification, entries.last().classification)
-            assertEquals(target.version, entries.last().targetVersion)
-            assertEquals(entries.last().targetVersion, retained.targetVersion)
-            assertEquals("blocked-after-unknown", entries.last().desiredText)
-            assertTrue(entries.last().ops.isEmpty())
-            assertEquals("blocked-after-unknown", retained.desiredText)
-            assertTrue(retained.ops.isEmpty())
-            assertEquals(1, executor.submittedPlans.size)
-        } finally {
-            EditorTrace.sink = originalSink
-        }
+        assertEquals(EditorState.Uninitialized, editor.state())
+        assertEquals(AbiValue.Obj(mapOf("initialized_from" to AbiValue.Str(""))), editor.verificationState.opaqueState)
+        assertTrue(editor.setText("fresh") is EditorResult.Synced)
+        assertEquals(AbiValue.Obj(mapOf("initialized_from" to AbiValue.Str(""), "last" to AbiValue.Str("fresh"))), editor.verificationState.opaqueState)
     }
 
-    @Test fun incompatible_target_abi_is_structured_and_emits_no_hid() {
-        val target = EditorTestFixtures.target(hostAbi = TargetPackage.HOST_ABI_VERSION + 1)
-        val hid = RecordingHid()
-        val executor = RecordingEditorExecutor(ArrayDeque())
-        val editor = Editor(target, executor, hid)
-        val entries = mutableListOf<VerificationEntry>()
-        val originalSink = EditorTrace.sink
-        EditorTrace.sink = object : VerificationSink {
-            override fun record(entry: VerificationEntry) { entries += entry }
-        }
-
-        try {
-            val failure = editor.setText("valid") as EditorResult.EditorFailure
-            val classification = failure.classification as FailureClassification.AbiMismatch
-            val entry = entries.single()
-            val retained = editor.verificationState.lastPlan!!
-
-            assertEquals(TargetPackage.HOST_ABI_VERSION, classification.expected)
-            assertEquals(target.hostAbi, classification.actual)
-            assertEquals(EditorState.Failed, editor.state())
-            assertNull(failure.plan)
-            assertEquals(classification, entry.classification)
-            assertEquals(target.version, entry.targetVersion)
-            assertEquals(entry.targetVersion, retained.targetVersion)
-            assertEquals("valid", retained.desiredText)
-            assertTrue(retained.ops.isEmpty())
-            assertTrue(hid.calls.isEmpty())
-            assertTrue(executor.submittedPlans.isEmpty())
-        } finally {
-            EditorTrace.sink = originalSink
-        }
-    }
-
-
-    @Test fun public_result_surface_omits_target_program_state() {
-        val forbiddenTerms = listOf(
-            "caret",
-            "selection",
-            "programstate",
-            "assumeddocument",
-            "point",
-            "revision",
-        )
-        val publicAccessors = listOf(
-            EditorResult::class.java,
-            EditorResult.Synced::class.java,
-            EditorResult.EditorFailure::class.java,
-            EditorState::class.java,
-        ).flatMap { type ->
-            type.methods.filter { method -> method.declaringClass == type }.map { it.name }
-        }.map(String::lowercase)
-
-        assertFalse(publicAccessors.any { accessor ->
-            forbiddenTerms.any(accessor::contains)
-        })
-    }
-
-    @Test fun verification_sink_and_retained_plan_preserve_full_delivered_evidence() {
+    @Test fun partial_delivery_discards_prediction_marks_unknown_and_blocks_until_reset() {
         val executor = RecordingEditorExecutor(
             ArrayDeque(
                 listOf(
-                    ExecutionOutcome.Delivered(emptyList()),
+                    ExecutionOutcome.Partial(emptyList(), FailureClassification.TransportFailure("link lost")),
                     ExecutionOutcome.Delivered(emptyList()),
                 ),
             ),
         )
-        val target = EditorTestFixtures.target()
-        val editor = Editor(target, executor, RecordingHid())
-        val entries = mutableListOf<VerificationEntry>()
-        val originalSink = EditorTrace.sink
-        EditorTrace.sink = object : VerificationSink {
-            override fun record(entry: VerificationEntry) {
-                entries += entry
-            }
+        val editor = editor(
+            executor = executor,
+            mainLua = EditorTestFixtures.packageProgram(
+                initializer = "{ revision = 0 }",
+                planner = "return { actions = { { kind = 'tap', usage = 'USB_KEY_A' } }, next_state = { revision = 1 } }",
+            ),
+        )
+
+        val partial = editor.setText("first") as EditorResult.EditorFailure
+        assertTrue(partial.classification is FailureClassification.TransportFailure)
+        assertEquals(EditorState.Unknown, editor.state())
+        assertEquals("", editor.verificationState.assumedDocument)
+        assertEquals(AbiValue.Obj(mapOf("revision" to AbiValue.Int64(0))), editor.verificationState.opaqueState)
+        assertEquals("UNKNOWN", editor.verificationState.lastPlan!!.outcome)
+
+        val rejected = editor.setText("blocked") as EditorResult.EditorFailure
+        assertTrue(rejected.classification is FailureClassification.EnvironmentFailure)
+        assertNull(rejected.plan)
+        assertEquals(1, executor.submittedPlans.size)
+
+        editor.reset()
+        assertTrue(editor.setText("recovered") is EditorResult.Synced)
+        assertEquals(EditorState.Synced, editor.state())
+    }
+
+    @Test fun serialized_requests_plan_the_second_snapshot_from_the_first_committed_snapshot() {
+        val executor = GateExecutor()
+        val editor = editor(
+            executor = executor,
+            mainLua = EditorTestFixtures.packageProgram(
+                initializer = "{ revision = 0 }",
+                planner = """
+                    return {
+                        actions = { { kind = "tap", usage = "USB_KEY_A" } },
+                        next_state = { previous = current, revision = state.revision + 1 },
+                    }
+                """.trimIndent(),
+            ),
+        )
+        val firstResult = arrayOfNulls<EditorResult>(1)
+        val secondResult = arrayOfNulls<EditorResult>(1)
+
+        val first = Thread { firstResult[0] = editor.setText("first") }
+        first.start()
+        executor.entered.await()
+        val second = Thread { secondResult[0] = editor.setText("second") }
+        second.start()
+        executor.release.countDown()
+        first.join()
+        second.join()
+
+        assertTrue(firstResult[0] is EditorResult.Synced)
+        assertTrue(secondResult[0] is EditorResult.Synced)
+        assertEquals(2, executor.submittedPlans.size)
+        assertEquals("first", editor.verificationState.lastPlan!!.currentText)
+        assertEquals("second", editor.verificationState.lastPlan!!.desiredText)
+        assertEquals(AbiValue.Str("first"), (editor.verificationState.opaqueState as AbiValue.Obj).fields.getValue("previous"))
+    }
+
+    @Test fun valid_symbolic_actions_compile_in_order_and_invalid_or_reserved_actions_never_execute() {
+        val validExecutor = RecordingEditorExecutor(ArrayDeque(listOf(ExecutionOutcome.Delivered(emptyList()))))
+        val valid = editor(
+            executor = validExecutor,
+            mainLua = EditorTestFixtures.packageProgram(
+                initializer = "{}",
+                planner = """
+                    return {
+                        actions = {
+                            { kind = "tap", usage = "USB_KEY_A" },
+                            { kind = "down", usage = "USB_KEY_LEFTSHIFT" },
+                            { kind = "up", usage = "USB_KEY_LEFTSHIFT" },
+                            { kind = "text", text = "a" },
+                        },
+                        next_state = state,
+                    }
+                """.trimIndent(),
+            ),
+        )
+
+        val validResult = valid.setText("target") as EditorResult.Synced
+        assertEquals(listOf(Opcodes.KEY_TAP, Opcodes.KEY_DOWN, Opcodes.KEY_UP), validResult.plan.take(3).map { it.opcode })
+        assertTrue(validResult.plan.size > 3)
+
+        data class Case(val name: String, val actions: String, val policy: ExecutionPolicy)
+        val rejectedCases = listOf(
+            Case("unknown kind", "{ { kind = 'rotate', usage = 'USB_KEY_A' } }", ExecutionPolicy.PRODUCTION),
+            Case("extra field", "{ { kind = 'tap', usage = 'USB_KEY_A', frame = 'raw' } }", ExecutionPolicy.PRODUCTION),
+            Case("missing usage", "{ { kind = 'down' } }", ExecutionPolicy.PRODUCTION),
+            Case("reserved F24", "{ { kind = 'tap', usage = 'USB_KEY_F24' } }", ExecutionPolicy.CONFORMANCE),
+        )
+        rejectedCases.forEach { case ->
+            val hid = RecordingHid()
+            val executor = RecordingEditorExecutor(ArrayDeque())
+            val candidate = editor(
+                executor = executor,
+                hid = hid,
+                policy = case.policy,
+                mainLua = EditorTestFixtures.packageProgram(
+                    initializer = "{}",
+                    planner = "return { actions = ${case.actions}, next_state = state }",
+                ),
+            )
+
+            val failure = candidate.setText("target") as EditorResult.EditorFailure
+            assertTrue(case.name, failure.classification is FailureClassification.PlanningError)
+            assertTrue(case.name, executor.submittedPlans.isEmpty())
+            assertTrue(case.name, hid.calls.isEmpty())
         }
+    }
 
-        try {
-            assertTrue(editor.setText("known") is EditorResult.Synced)
-            val result = editor.setText("known!") as EditorResult.Synced
-            assertEquals(2, entries.size)
-            val entry = entries.last()
-            val retained = editor.verificationState.lastPlan!!
+    @Test fun malformed_later_text_and_oversized_plan_fail_atomically_before_execution() {
+        data class Case(val name: String, val planner: String)
+        val cases = listOf(
+            Case(
+                "unrepresentable later text action",
+                """
+                    return {
+                        actions = {
+                            { kind = "tap", usage = "USB_KEY_A" },
+                            { kind = "text", text = "☃" },
+                        },
+                        next_state = state,
+                    }
+                """.trimIndent(),
+            ),
+            Case(
+                "oversized plan",
+                """
+                    local actions = {}
+                    for i = 1, 1001 do actions[i] = { kind = "tap", usage = "USB_KEY_A" } end
+                    return { actions = actions, next_state = state }
+                """.trimIndent(),
+            ),
+        )
+        cases.forEach { case ->
+            val hid = RecordingHid()
+            val executor = RecordingEditorExecutor(ArrayDeque())
+            val candidate = editor(
+                executor = executor,
+                hid = hid,
+                mainLua = EditorTestFixtures.packageProgram("{}", case.planner),
+            )
 
-            assertEquals(TargetPackage.HOST_ABI_VERSION, entry.abiVersion)
-            assertEquals(target.id, entry.targetId)
-            assertEquals(target.version, entry.targetVersion)
-            assertEquals("known", entry.assumedState.buffer)
-            assertEquals("known!", entry.desiredText)
-            assertEquals("known!", entry.predictedState.buffer)
-            assertEquals(result.plan, entry.ops)
-            assertNull(entry.classification)
+            val failure = candidate.setText("target") as EditorResult.EditorFailure
 
-            assertEquals(entry.abiVersion, retained.abiVersion)
-            assertEquals(entry.targetId, retained.targetId)
-            assertEquals(entry.targetVersion, retained.targetVersion)
-            assertEquals(entry.assumedState, retained.assumedState)
-            assertEquals(entry.desiredText, retained.desiredText)
-            assertEquals(entry.predictedState, retained.predictedState)
-            assertEquals(entry.ops, retained.ops)
-        } finally {
-            EditorTrace.sink = originalSink
+            assertTrue(case.name, failure.classification is FailureClassification.PlanningError)
+            assertTrue(case.name, executor.submittedPlans.isEmpty())
+            assertTrue(case.name, hid.calls.isEmpty())
+            assertTrue(case.name, hid.issuedSequenceIds.isEmpty())
+        }
+    }
+
+    private fun editor(
+        executor: EditorExecutor,
+        hid: RecordingHid = RecordingHid(),
+        policy: ExecutionPolicy = ExecutionPolicy.PRODUCTION,
+        mainLua: String,
+    ): Editor = Editor(
+        target = EditorTestFixtures.target(mainLua),
+        executor = executor,
+        hid = hid,
+        sharedModules = emptyMap(),
+        policy = policy,
+    )
+
+    private class GateExecutor : EditorExecutor {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val submittedPlans = mutableListOf<List<io.sleepwalker.core.hid.LowLevelOp>>()
+
+        override fun execute(plan: List<io.sleepwalker.core.hid.LowLevelOp>): ExecutionOutcome {
+            submittedPlans += plan
+            entered.countDown()
+            release.await()
+            return ExecutionOutcome.Delivered(emptyList())
         }
     }
 }

@@ -35,6 +35,9 @@ import io.sleepwalker.core.editor.ExecutionOutcome
 import io.sleepwalker.core.editor.FailureClassification
 import io.sleepwalker.core.editor.TargetPackageLoader
 import io.sleepwalker.core.editor.VerificationEntry
+import io.sleepwalker.core.editor.AbiValue
+import io.sleepwalker.core.editor.SymbolicAction
+import io.sleepwalker.core.editor.ExecutionPolicy
 import io.sleepwalker.core.editor.VerificationSink
 import io.sleepwalker.core.protocol.Status
 import java.util.UUID
@@ -55,39 +58,40 @@ import java.util.concurrent.ConcurrentHashMap
  * captured from [EditorTrace.sink]. Nullable fields are absent before
  * the first [Editor.setText] call completes.
  *
- * @property state             current [EditorState] (public).
- * @property targetId          loaded target package id.
- * @property hostAbi           host ABI version of the plan.
- * @property assumedBuffer     Editor's assumed target document before
- *                             the last transition.
- * @property desiredText       the complete snapshot requested in the
- *                             last call.
- * @property lcp               longest common prefix length of the last
- *                             diff.
- * @property oldMid            characters removed in the last diff.
- * @property newMid            characters inserted in the last diff.
- * @property predictedBuffer   target's predicted line buffer after the
- *                             last transition.
- * @property predictedPoint    predicted caret point after the last
- *                             transition.
- * @property predictedRevision predicted edit revision after the last
- *                             transition.
- * @property lastPlanOps       number of low-level ops in the last plan.
- * @property lastClassification simple name of the last
- *   [FailureClassification], or null on success.
+ * @property state              current public [EditorState].
+ * @property targetId           target package id.
+ * @property targetVersion      target package semantic version.
+ * @property targetSourceHash   exact bundled package source identity.
+ * @property hostAbi            host ABI version.
+ * @property currentText        committed rendered text before planning.
+ * @property desiredText        complete rendered-text goal.
+ * @property opaqueInputState   package-owned committed input state.
+ * @property opaqueOutputState  package-returned candidate state.
+ * @property symbolicActions    validated inert package actions.
+ * @property ops                compiled low-level operations.
+ * @property layoutId           pinned keyboard-layout identity.
+ * @property costMetricId       pinned text-cost metric identity.
+ * @property policyId           active execution-policy identity.
+ * @property outcome            transaction commit outcome.
+ * @property lastPlanOps        compiled operation count.
+ * @property lastClassification structured failure class, or null on success.
  */
 data class EditorSnapshot(
     val state: EditorState,
     val targetId: String?,
+    val targetVersion: String?,
+    val targetSourceHash: String?,
     val hostAbi: Int?,
-    val assumedBuffer: String?,
+    val currentText: String?,
     val desiredText: String?,
-    val lcp: Int?,
-    val oldMid: String?,
-    val newMid: String?,
-    val predictedBuffer: String?,
-    val predictedPoint: Int?,
-    val predictedRevision: Long?,
+    val opaqueInputState: AbiValue?,
+    val opaqueOutputState: AbiValue?,
+    val symbolicActions: List<SymbolicAction>?,
+    val ops: List<io.sleepwalker.core.hid.LowLevelOp>?,
+    val layoutId: String?,
+    val costMetricId: String?,
+    val policyId: String?,
+    val outcome: String?,
     val lastPlanOps: Int,
     val lastClassification: String?,
 )
@@ -194,8 +198,25 @@ class SleepwalkerBleService : Service() {
         fun submitUiEditorRequest(request: UiEditorRequest) = uiEditorCommandLane.submit(request)
 
 
-        /** Lazy-initialized [Editor] singleton. */
-        val editor: Editor by lazy {
+        @Volatile
+        private var _editor: Editor? = null
+
+        /** Get or initialize the [Editor] instance with default PRODUCTION policy. */
+        val editor: Editor
+            get() = synchronized(editorLock) {
+                if (_editor == null) {
+                    _editor = createEditorInstance(ExecutionPolicy.PRODUCTION)
+                }
+                _editor!!
+            }
+
+        /** Recreate the Editor with a specific [ExecutionPolicy] (thread-safe). */
+        fun recreateEditor(policy: ExecutionPolicy): Editor = synchronized(editorLock) {
+            _editor = createEditorInstance(policy)
+            return _editor!!
+        }
+
+        private fun createEditorInstance(policy: ExecutionPolicy): Editor {
             val ctx = appContext
                 ?: error("SleepwalkerBleService not initialized; call startScan first")
             val loader = TargetPackageLoader(ctx.assets)
@@ -211,21 +232,24 @@ class SleepwalkerBleService : Service() {
                             "abiVersion" to entry.abiVersion,
                             "targetId" to entry.targetId,
                             "targetVersion" to entry.targetVersion,
-                            "desiredText_len" to entry.desiredText.length,
-                            "lcp" to entry.lcp,
-                            "oldMid" to entry.oldMid,
-                            "newMid" to entry.newMid,
-                            "planOps" to entry.ops.size,
-                            "predicted_state_buffer" to entry.predictedState.buffer,
-                            "predicted_state_point" to entry.predictedState.point,
-                            "predicted_state_revision" to entry.predictedState.revision,
+                            "targetSourceHash" to entry.targetSourceHash,
+                            "currentText" to entry.currentText,
+                            "desiredText" to entry.desiredText,
+                            "opaqueInputState" to entry.opaqueInputState.toString(),
+                            "opaqueOutputState" to entry.opaqueOutputState?.toString(),
+                            "symbolicActions" to entry.symbolicActions?.toString(),
+                            "ops" to entry.ops.size,
+                            "layoutId" to entry.layoutId,
+                            "costMetricId" to entry.costMetricId,
+                            "policyId" to entry.policyId,
+                            "outcome" to entry.outcome,
                             "classification" to
                                 (entry.classification?.javaClass?.simpleName ?: "null"),
                         ),
                     )
                 }
             }
-            loader.createEditor("readline-emacs-ascii", exec, hid)
+            return loader.createEditor("readline-emacs-ascii", exec, hid, policy)
         }
 
         /** Last [VerificationEntry] captured from [EditorTrace.sink]. */
@@ -237,22 +261,25 @@ class SleepwalkerBleService : Service() {
          * Returns null if the editor has not been initialized.
          */
         fun editorSnapshot(): EditorSnapshot? {
-            if (lastVerification == null) return null
-            val v = lastVerification
+            val v = lastVerification ?: return null
             return EditorSnapshot(
                 state = editor.state(),
-                targetId = v?.targetId,
-                hostAbi = v?.abiVersion,
-                assumedBuffer = v?.assumedState?.buffer,
-                desiredText = v?.desiredText,
-                lcp = v?.lcp,
-                oldMid = v?.oldMid,
-                newMid = v?.newMid,
-                predictedBuffer = v?.predictedState?.buffer,
-                predictedPoint = v?.predictedState?.point,
-                predictedRevision = v?.predictedState?.revision,
-                lastPlanOps = v?.ops?.size ?: 0,
-                lastClassification = v?.classification?.javaClass?.simpleName,
+                targetId = v.targetId,
+                targetVersion = v.targetVersion,
+                targetSourceHash = v.targetSourceHash,
+                hostAbi = v.abiVersion,
+                currentText = v.currentText,
+                desiredText = v.desiredText,
+                opaqueInputState = v.opaqueInputState,
+                opaqueOutputState = v.opaqueOutputState,
+                symbolicActions = v.symbolicActions,
+                ops = v.ops,
+                layoutId = v.layoutId,
+                costMetricId = v.costMetricId,
+                policyId = v.policyId,
+                outcome = v.outcome,
+                lastPlanOps = v.ops.size,
+                lastClassification = v.classification?.javaClass?.simpleName,
             )
         }
 

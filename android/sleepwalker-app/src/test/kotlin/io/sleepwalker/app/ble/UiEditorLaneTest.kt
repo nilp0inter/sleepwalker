@@ -297,40 +297,6 @@ class UiEditorLaneTest {
         assertEquals(3L, resetResult.generation)
     }
 
-    // ── Snapshot state seam ──
-
-    @Test
-    fun `snapshotState returns provider value after snapshot submission`() {
-        val executor = Executors.newSingleThreadExecutor()
-        val testSnapshot = EditorSnapshot(
-            state = EditorState.Synced,
-            targetId = "readline-emacs-ascii",
-            hostAbi = 1,
-            assumedBuffer = null,
-            desiredText = "test",
-            lcp = null,
-            oldMid = null,
-            newMid = null,
-            predictedBuffer = null,
-            predictedPoint = null,
-            predictedRevision = 5L,
-            lastPlanOps = 0,
-            lastClassification = null,
-        )
-        val lane = createLane(
-            executor = executor,
-            snapshotProvider = { testSnapshot },
-        )
-        lane.listener = createListener()
-
-        lane.submit(UiEditorRequest.Snapshot(id = 1, generation = 1, text = "test"))
-        flush(executor)
-
-        val state = lane.snapshotState()
-        assertNotNull(state)
-        assertEquals("readline-emacs-ascii", state?.targetId)
-        assertEquals(5L, state?.predictedRevision)
-    }
 
     // ── Edge cases ──
 

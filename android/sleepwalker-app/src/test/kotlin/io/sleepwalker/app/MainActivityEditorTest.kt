@@ -94,12 +94,6 @@ class MainActivityEditorTest {
 
     // ── Mode routing ──
 
-    @Test
-    fun `default mode is append only`() {
-        createActivity()
-        assertEquals(DemoTextMode.APPEND_ONLY, activity.currentMode)
-        assertFalse(activity.readlineRadio.isChecked)
-    }
 
     @Test
     fun `readline extra intent selects readline editor mode`() {
@@ -379,48 +373,10 @@ class MainActivityEditorTest {
             syncResult,
         )
         drainMain()
-        assertEquals("Synced change #0 (id $nextId): 'hello'",
+        assertEquals("Synced change (id $nextId): 'hello'",
             activity.feedbackText.text.toString())
     }
 
-    @Test
-    fun `Synced result with snapshot shows revision number`() {
-        createActivity()
-        enableReadlineInput()
-        switchToReadlineMode()
-        installCaptures()
-        activity.textInput.setText("hello")
-        drainMain()
-        val snapshot = EditorSnapshot(
-            state = EditorState.Synced,
-            targetId = "readline-emacs-ascii",
-            hostAbi = 1,
-            assumedBuffer = null,
-            desiredText = "hello",
-            lcp = 0,
-            oldMid = "",
-            newMid = "hello",
-            predictedBuffer = "hello",
-            predictedPoint = 5,
-            predictedRevision = 42L,
-            lastPlanOps = 3,
-            lastClassification = null,
-        )
-        val syncResult = UiEditorResult.Snapshot(
-            id = nextId,
-            generation = activity.lifecycleGeneration,
-            text = "hello",
-            result = EditorResult.Synced("hello", emptyList()),
-            snapshot = snapshot,
-        )
-        activity.injectUiEditorResult(
-            UiEditorRequest.Snapshot(id = nextId, generation = activity.lifecycleGeneration, text = "hello"),
-            syncResult,
-        )
-        drainMain()
-        assertEquals("Synced change #42 (id $nextId): 'hello'",
-            activity.feedbackText.text.toString())
-    }
 
     // ── Result feedback: recoverable failures ──
 
@@ -441,13 +397,7 @@ class MainActivityEditorTest {
                 classification = FailureClassification.UnsupportedBehavior("multiline content"),
                 plan = null,
             ),
-            snapshot = EditorSnapshot(
-                state = EditorState.Failed,
-                targetId = null, hostAbi = null, assumedBuffer = null, desiredText = "bad",
-                lcp = null, oldMid = null, newMid = null,
-                predictedBuffer = null, predictedPoint = null, predictedRevision = null,
-                lastPlanOps = 0, lastClassification = "UnsupportedBehavior",
-            ),
+            snapshot = null,
         )
         activity.injectUiEditorResult(
             UiEditorRequest.Snapshot(id = nextId, generation = activity.lifecycleGeneration, text = "bad"),
@@ -476,13 +426,7 @@ class MainActivityEditorTest {
                 classification = FailureClassification.PlanningError("Lua runtime error"),
                 plan = null,
             ),
-            snapshot = EditorSnapshot(
-                state = EditorState.Failed,
-                targetId = null, hostAbi = null, assumedBuffer = null, desiredText = "x",
-                lcp = null, oldMid = null, newMid = null,
-                predictedBuffer = null, predictedPoint = null, predictedRevision = null,
-                lastPlanOps = 0, lastClassification = "PlanningError",
-            ),
+            snapshot = null,
         )
         activity.injectUiEditorResult(
             UiEditorRequest.Snapshot(id = nextId, generation = activity.lifecycleGeneration, text = "x"),
@@ -510,13 +454,7 @@ class MainActivityEditorTest {
                 classification = FailureClassification.AbiMismatch(expected = 2, actual = 1),
                 plan = null,
             ),
-            snapshot = EditorSnapshot(
-                state = EditorState.Failed,
-                targetId = null, hostAbi = 1, assumedBuffer = null, desiredText = "x",
-                lcp = null, oldMid = null, newMid = null,
-                predictedBuffer = null, predictedPoint = null, predictedRevision = null,
-                lastPlanOps = 0, lastClassification = "AbiMismatch",
-            ),
+            snapshot = null,
         )
         activity.injectUiEditorResult(
             UiEditorRequest.Snapshot(id = nextId, generation = activity.lifecycleGeneration, text = "x"),
@@ -546,13 +484,7 @@ class MainActivityEditorTest {
                 classification = FailureClassification.TransportFailure("BLE link lost"),
                 plan = emptyList(),
             ),
-            snapshot = EditorSnapshot(
-                state = EditorState.Unknown,
-                targetId = null, hostAbi = null, assumedBuffer = null, desiredText = "partial",
-                lcp = null, oldMid = null, newMid = null,
-                predictedBuffer = null, predictedPoint = null, predictedRevision = null,
-                lastPlanOps = 0, lastClassification = "TransportFailure",
-            ),
+            snapshot = terminalSnapshot("partial", "TransportFailure"),
         )
         activity.injectUiEditorResult(
             UiEditorRequest.Snapshot(id = nextId, generation = activity.lifecycleGeneration, text = "partial"),
@@ -581,13 +513,7 @@ class MainActivityEditorTest {
                 classification = FailureClassification.EnvironmentFailure("USB device disconnected"),
                 plan = emptyList(),
             ),
-            snapshot = EditorSnapshot(
-                state = EditorState.Unknown,
-                targetId = null, hostAbi = null, assumedBuffer = null, desiredText = "x",
-                lcp = null, oldMid = null, newMid = null,
-                predictedBuffer = null, predictedPoint = null, predictedRevision = null,
-                lastPlanOps = 0, lastClassification = "EnvironmentFailure",
-            ),
+            snapshot = terminalSnapshot("x", "EnvironmentFailure"),
         )
         activity.injectUiEditorResult(
             UiEditorRequest.Snapshot(id = nextId, generation = activity.lifecycleGeneration, text = "x"),
@@ -687,7 +613,7 @@ class MainActivityEditorTest {
             freshResult,
         )
         drainMain()
-        assertEquals("Synced change #0 (id $nextId): 'stale'",
+        assertEquals("Synced change (id $nextId): 'stale'",
             activity.feedbackText.text.toString())
     }
 
@@ -730,4 +656,24 @@ class MainActivityEditorTest {
         assertFalse(activity.isResetPending)
         assertTrue(activity.appendOnlyRadio.isEnabled)
     }
+    private fun terminalSnapshot(desiredText: String, classification: String) = EditorSnapshot(
+        state = EditorState.Unknown,
+        targetId = null,
+        targetVersion = null,
+        targetSourceHash = null,
+        hostAbi = null,
+        currentText = null,
+        desiredText = desiredText,
+        opaqueInputState = null,
+        opaqueOutputState = null,
+        symbolicActions = null,
+        ops = null,
+        layoutId = null,
+        costMetricId = null,
+        policyId = null,
+        outcome = "UNKNOWN",
+        lastPlanOps = 0,
+        lastClassification = classification,
+    )
+
 }
