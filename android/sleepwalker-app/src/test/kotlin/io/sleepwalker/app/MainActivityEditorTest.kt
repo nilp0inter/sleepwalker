@@ -1,6 +1,8 @@
 package io.sleepwalker.app
 
 import android.content.Intent
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
 import android.os.Looper
 import io.mockk.mockk
 import io.sleepwalker.app.ble.EditorSnapshot
@@ -155,6 +157,27 @@ class MainActivityEditorTest {
         val req = capturedRequests[0] as UiEditorRequest.Snapshot
         assertEquals("hello", req.text)
         assertEquals(activity.lifecycleGeneration, req.generation)
+    }
+
+    @Test
+    fun `readline voice IME commits a normal text phrase as one complete snapshot`() {
+        createActivity()
+        enableReadlineInput()
+        switchToReadlineMode()
+        installCaptures()
+
+        val variation = activity.textInput.inputType and InputType.TYPE_MASK_VARIATION
+        assertFalse(variation == InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        assertFalse(variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+        assertFalse(variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)
+
+        val phrase = "open the pod bay doors"
+        val inputConnection = requireNotNull(activity.textInput.onCreateInputConnection(EditorInfo()))
+        assertTrue(inputConnection.commitText(phrase, 1))
+        drainMain()
+
+        assertEquals(1, capturedRequests.size)
+        assertEquals(phrase, (capturedRequests.single() as UiEditorRequest.Snapshot).text)
     }
 
     @Test
